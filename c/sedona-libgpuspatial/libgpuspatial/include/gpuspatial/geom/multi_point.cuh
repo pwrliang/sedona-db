@@ -10,7 +10,7 @@ template <typename POINT_T>
 class MultiPoint {
  public:
   using point_t = POINT_T;
-  using box_t = Box<POINT_T>;
+  using box_t = Box<Point<float, point_t::n_dim>>;
 
   MultiPoint() = default;
 
@@ -39,10 +39,9 @@ class MultiPoint {
 
 template <typename POINT_T, typename INDEX_T>
 class MultiPointArrayView {
-  using box_t = Box<POINT_T>;
-
  public:
   using point_t = POINT_T;
+  using box_t = Box<Point<float, point_t::n_dim>>;
   using geometry_t = MultiPoint<POINT_T>;
 
   MultiPointArrayView() = default;

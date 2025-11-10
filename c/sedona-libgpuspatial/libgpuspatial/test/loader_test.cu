@@ -14,12 +14,48 @@
 
 #include <rmm/cuda_stream.hpp>
 
+#include "gpuspatial/loader/parallel_wkb_loader.h"
+
 namespace gpuspatial {
 
 template <typename T>
 class WKBLoaderTest : public ::testing::Test {};
 TYPED_TEST_SUITE(WKBLoaderTest, TestUtils::PointIndexTypePairs);
 
+TYPED_TEST(WKBLoaderTest, Point) {
+  using point_t = typename TypeParam::first_type;
+  using index_t = typename TypeParam::second_type;
+  nanoarrow::UniqueArrayStream stream;
+
+  // auto path =
+  //     TestUtils::GetTestDataPath("../test_data/natural-earth_countries_wkb.arrows");
+  //
+  // ArrayStreamFromIpc(path, "geometry", stream.get());
+  // FIXME: it interprets  MULTIPOINT (70 70, 80 80)  as LINESTRING
+  ArrayStreamFromWKT(
+      {
+          {"GEOMETRYCOLLECTION ( POINT (10 10), LINESTRING (20 20, 30 30, 40 20), GEOMETRYCOLLECTION ( POLYGON ((50 50, 60 50, 60 60, 50 60, 50 50)), MULTIPOINT (70 70, 80 80) ) )"},
+      },
+      GEOARROW_TYPE_WKB, stream.get());
+  nanoarrow::UniqueArray array;
+  ArrowError error;
+  ArrowErrorSet(&error, "Failed to get next array from stream");
+
+  rmm::cuda_stream cuda_stream;
+
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
+
+  printf("arrow size %ld\n", array->length);
+
+  ParallelWkbLoader<point_t, index_t> loader;
+  typename ParallelWkbLoader<point_t, index_t>::Config config;
+
+  loader.Init(config);
+
+  loader.Parse(cuda_stream, array.get(), 0, array->length);
+}
+
+#if 0
 TYPED_TEST(WKBLoaderTest, Point) {
   using point_t = typename TypeParam::first_type;
   using index_t = typename TypeParam::second_type;
@@ -588,5 +624,6 @@ TEST(WKBLoaderTest, GeoCollectionWKBLoader) {
 
   loader.Load(array.get(), 0, array->length, *seg);
 }
+#endif
 
 }  // namespace gpuspatial

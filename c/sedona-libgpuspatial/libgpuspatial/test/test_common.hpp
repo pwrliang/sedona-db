@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+#include "rmm/exec_policy.hpp"
 
 namespace TestUtils {
 using PointTypes =

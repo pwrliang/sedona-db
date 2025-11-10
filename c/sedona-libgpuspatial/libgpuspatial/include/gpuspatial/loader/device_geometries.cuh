@@ -32,9 +32,12 @@ template <typename POINT_T, typename INDEX_T>
 class BoxSegment;
 
 template <typename POINT_T, typename INDEX_T>
+class ParallelWkbLoader;
+
+template <typename POINT_T, typename INDEX_T>
 struct DeviceGeometries {
   using point_t = POINT_T;
-  using box_t = Box<point_t>;
+  using box_t = Box<Point<float, point_t::n_dim>>;
 
   DeviceGeometries() : type_(GeometryType::kNumGeometryTypes) {}
 
@@ -42,46 +45,34 @@ struct DeviceGeometries {
   GeometryArrayView_T GetGeometryArrayView() const {
     // The const version has identical logic
     if constexpr (std::is_same_v<GeometryArrayView_T, PointArrayView<POINT_T, INDEX_T>>) {
-      if (points_ != nullptr) {
-        return {ArrayView<POINT_T>(*points_)};
-      }
+      return {ArrayView<POINT_T>(points_)};
     } else if constexpr (std::is_same_v<GeometryArrayView_T,
                                         MultiPointArrayView<POINT_T, INDEX_T>>) {
-      if (offsets_.multi_point_offsets.prefix_sum != nullptr) {
-        return {ArrayView<INDEX_T>(*offsets_.multi_point_offsets.prefix_sum),
-                ArrayView<POINT_T>(*points_), ArrayView<box_t>(*mbrs_)};
-      }
+      return {ArrayView<INDEX_T>(offsets_.multi_point_offsets.ps_num_points),
+              ArrayView<POINT_T>(points_), ArrayView<box_t>(mbrs_)};
     } else if constexpr (std::is_same_v<GeometryArrayView_T,
                                         LineStringArrayView<POINT_T, INDEX_T>>) {
-      if (offsets_.line_string_offsets.prefix_sum != nullptr) {
-        return {ArrayView<INDEX_T>(*offsets_.line_string_offsets.prefix_sum),
-                ArrayView<POINT_T>(*points_), ArrayView<box_t>(*mbrs_)};
-      }
+      return {ArrayView<INDEX_T>(offsets_.line_string_offsets.ps_num_points),
+              ArrayView<POINT_T>(points_), ArrayView<box_t>(mbrs_)};
     } else if constexpr (std::is_same_v<GeometryArrayView_T,
                                         MultiLineStringArrayView<POINT_T, INDEX_T>>) {
-      if (offsets_.multi_line_string_offsets.prefix_sum_geoms != nullptr) {
-        return {ArrayView<INDEX_T>(*offsets_.multi_line_string_offsets.prefix_sum_geoms),
-                ArrayView<INDEX_T>(*offsets_.multi_line_string_offsets.prefix_sum_parts),
-                ArrayView<POINT_T>(*points_), ArrayView<box_t>(*mbrs_)};
-      }
+      return {ArrayView<INDEX_T>(offsets_.multi_line_string_offsets.ps_num_parts),
+              ArrayView<INDEX_T>(offsets_.multi_line_string_offsets.ps_num_points),
+              ArrayView<POINT_T>(points_), ArrayView<box_t>(mbrs_)};
     } else if constexpr (std::is_same_v<GeometryArrayView_T,
                                         PolygonArrayView<point_t, INDEX_T>>) {
-      if (offsets_.polygon_offsets.prefix_sum_polygons != nullptr) {
-        return {ArrayView<INDEX_T>(*offsets_.polygon_offsets.prefix_sum_polygons),
-                ArrayView<INDEX_T>(*offsets_.polygon_offsets.prefix_sum_rings),
-                ArrayView<POINT_T>(*points_), ArrayView<box_t>(*mbrs_)};
-      }
+      return {ArrayView<INDEX_T>(offsets_.polygon_offsets.ps_num_rings),
+              ArrayView<INDEX_T>(offsets_.polygon_offsets.ps_num_points),
+              ArrayView<POINT_T>(points_), ArrayView<box_t>(mbrs_)};
     } else if constexpr (std::is_same_v<GeometryArrayView_T,
                                         MultiPolygonArrayView<point_t, INDEX_T>>) {
-      if (offsets_.multi_polygon_offsets.prefix_sum_geoms != nullptr) {
-        return {ArrayView<INDEX_T>(*offsets_.multi_polygon_offsets.prefix_sum_geoms),
-                ArrayView<INDEX_T>(*offsets_.multi_polygon_offsets.prefix_sum_parts),
-                ArrayView<INDEX_T>(*offsets_.multi_polygon_offsets.prefix_sum_rings),
-                ArrayView<POINT_T>(*points_), ArrayView<box_t>(*mbrs_)};
-      }
+      return {ArrayView<INDEX_T>(offsets_.multi_polygon_offsets.ps_num_parts),
+              ArrayView<INDEX_T>(offsets_.multi_polygon_offsets.ps_num_rings),
+              ArrayView<INDEX_T>(offsets_.multi_polygon_offsets.ps_num_points),
+              ArrayView<POINT_T>(points_), ArrayView<box_t>(mbrs_)};
     } else if constexpr (std::is_same_v<GeometryArrayView_T,
                                         BoxArrayView<point_t, INDEX_T>>) {
-      return {ArrayView<box_t>(*mbrs_)};
+      return {ArrayView<box_t>(mbrs_)};
     } else {
       static_assert(sizeof(GeometryArrayView_T) == 0,
                     "Unsupported GeometryView type requested.");
@@ -91,35 +82,45 @@ struct DeviceGeometries {
 
   struct MultiPointOffsets {
     // content is the index to points_
-    std::unique_ptr<rmm::device_uvector<INDEX_T>> prefix_sum;
+    rmm::device_uvector<INDEX_T> ps_num_points{0, rmm::cuda_stream_default};
   };
 
   struct LineStringOffsets {
     // content is the index to points
-    std::unique_ptr<rmm::device_uvector<INDEX_T>> prefix_sum;
+    rmm::device_uvector<INDEX_T> ps_num_points{0, rmm::cuda_stream_default};
   };
 
   struct MultiLineStringOffsets {
     // content is the index to prefix_sum_parts
-    std::unique_ptr<rmm::device_uvector<INDEX_T>> prefix_sum_geoms;
+    rmm::device_uvector<INDEX_T> ps_num_parts{0, rmm::cuda_stream_default};
     // content is the index to points
-    std::unique_ptr<rmm::device_uvector<INDEX_T>> prefix_sum_parts;
+    rmm::device_uvector<INDEX_T> ps_num_points{0, rmm::cuda_stream_default};
   };
 
   struct PolygonOffsets {
     // content is the index to prefix_sum_rings
-    std::unique_ptr<rmm::device_uvector<INDEX_T>> prefix_sum_polygons;
+    rmm::device_uvector<INDEX_T> ps_num_rings{0, rmm::cuda_stream_default};
     // content is the index to points
-    std::unique_ptr<rmm::device_uvector<INDEX_T>> prefix_sum_rings;
+    rmm::device_uvector<INDEX_T> ps_num_points{0, rmm::cuda_stream_default};
   };
 
   struct MultiPolygonOffsets {
     // content is the index to prefix_sum_parts
-    std::unique_ptr<rmm::device_uvector<INDEX_T>> prefix_sum_geoms;
+    rmm::device_uvector<INDEX_T> ps_num_parts{0, rmm::cuda_stream_default};
     // content is the index to prefix_sum_rings
-    std::unique_ptr<rmm::device_uvector<INDEX_T>> prefix_sum_parts;
+    rmm::device_uvector<INDEX_T> ps_num_rings{0, rmm::cuda_stream_default};
     // content is the index to points
-    std::unique_ptr<rmm::device_uvector<INDEX_T>> prefix_sum_rings;
+    rmm::device_uvector<INDEX_T> ps_num_points{0, rmm::cuda_stream_default};
+  };
+
+  struct GeometryCollectionOffsets {
+    rmm::device_uvector<GeometryType> part_types{0, rmm::cuda_stream_default};
+    // content is the index to prefix_sum_parts
+    rmm::device_uvector<INDEX_T> ps_num_parts{0, rmm::cuda_stream_default};
+    // content is the index to prefix_sum_rings
+    rmm::device_uvector<INDEX_T> ps_num_rings{0, rmm::cuda_stream_default};
+    // content is the index to points
+    rmm::device_uvector<INDEX_T> ps_num_points{0, rmm::cuda_stream_default};
   };
 
   struct Offsets {
@@ -130,18 +131,10 @@ struct DeviceGeometries {
     MultiPolygonOffsets multi_polygon_offsets;
   };
 
-  ArrayView<box_t> get_mbrs() const {
-    if (mbrs_ != nullptr) {
-      return ArrayView<box_t>(*mbrs_);
-    }
-    return {};
-  }
+  ArrayView<box_t> get_mbrs() const { return ArrayView<box_t>(mbrs_); }
 
   ArrayView<point_t> get_points() const {
-    if (points_ != nullptr) {
-      return ArrayView<point_t>(const_cast<point_t*>(points_->data()), points_->size());
-    }
-    return {};
+    return ArrayView<point_t>(const_cast<point_t*>(points_.data()), points_.size());
   }
 
   Offsets& get_offsets() { return offsets_; }
@@ -151,11 +144,7 @@ struct DeviceGeometries {
   GeometryType get_geometry_type() const { return type_; }
 
   size_t num_features() const {
-    if (type_ == GeometryType::kPoint) {
-      return points_->size();
-    } else {
-      return mbrs_->size();
-    }
+    return num_features_;
   }
 
  private:
@@ -166,13 +155,15 @@ struct DeviceGeometries {
   friend class PolygonSegment<POINT_T, INDEX_T>;
   friend class MultiPolygonSegment<POINT_T, INDEX_T>;
   friend class BoxSegment<POINT_T, INDEX_T>;
+  friend class ParallelWkbLoader<POINT_T, INDEX_T>;
 
+  INDEX_T num_features_;
   GeometryType type_;
   // used by all the geometries
-  std::unique_ptr<rmm::device_uvector<point_t>> points_;
+  rmm::device_uvector<point_t> points_{0, rmm::cuda_stream_default};
   Offsets offsets_;
   // is null for points
-  std::unique_ptr<rmm::device_uvector<box_t>> mbrs_;
+  rmm::device_uvector<box_t> mbrs_{0, rmm::cuda_stream_default};
 };
 
 }  // namespace gpuspatial

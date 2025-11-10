@@ -2,7 +2,7 @@
 #define GPUSPATIAL_GEOM_WKBLOADER_H
 #include <cassert>
 
-#include "gpuspatial/loader/geometry_segment.h"
+// #include "gpuspatial/loader/geometry_segment.h"
 
 #include "device_geometries.cuh"
 #include "gpuspatial/geom/box.cuh"

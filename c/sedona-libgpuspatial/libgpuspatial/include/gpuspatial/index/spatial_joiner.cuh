@@ -20,6 +20,8 @@
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
+// #include "gpuspatial/loader/geometry_segment.h"
+
 // #define GPUSPATIAL_PROFILING
 namespace gpuspatial {
 
@@ -44,7 +46,7 @@ class SpatialJoiner : public StreamingJoiner {
   using multi_polygon_array_t = MultiPolygonArrayView<point_t, index_t>;
 
   using dev_geometries_t = DeviceGeometries<point_t, index_t>;
-  using box_t = Box<point_t>;
+  using box_t = Box<Point<float, n_dim>>;
 
  public:
   struct SpatialJoinerConfig : Config {
@@ -71,7 +73,7 @@ class SpatialJoiner : public StreamingJoiner {
     rmm::cuda_stream_view cuda_stream;
     std::string shader_id;
     std::unique_ptr<WKBLoader<point_t>> stream_wkb_loader;
-    std::shared_ptr<GeometrySegment> stream_seg;
+    // std::shared_ptr<GeometrySegment> stream_seg;
     std::shared_ptr<dev_geometries_t> stream_geometries;
     std::unique_ptr<rmm::device_buffer> bvh_buffer;
     OptixTraversableHandle handle;
@@ -142,9 +144,9 @@ class SpatialJoiner : public StreamingJoiner {
   details::RTEngine rt_engine_;
   std::unique_ptr<rmm::device_buffer> bvh_buffer_;
   GeometryType build_type_;
-  WKBLoader<point_t> build_wkb_loader_;
+  // WKBLoader<point_t> build_wkb_loader_;
 
-  std::vector<std::shared_ptr<GeometrySegment>> segments_;
+  // std::vector<std::shared_ptr<GeometrySegment>> segments_;
   std::shared_ptr<DeviceGeometries<point_t, index_t>> build_geometries_;
   GeometryGrouper<point_t, index_t> geometry_grouper_;
   RelateEngine<point_t, index_t> relate_engine_;

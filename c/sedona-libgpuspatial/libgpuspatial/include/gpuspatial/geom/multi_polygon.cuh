@@ -8,7 +8,7 @@ class MultiPolygon {
  public:
   using point_t = POINT_T;
   using line_segments_view_t = LineString<point_t>;
-  using box_t = Box<POINT_T>;
+  using box_t = Box<Point<float, point_t::n_dim>>;
 
   MultiPolygon() = default;
 
@@ -76,10 +76,9 @@ class MultiPolygon {
  */
 template <typename POINT_T, typename INDEX_T>
 class MultiPolygonArrayView {
-  using box_t = Box<POINT_T>;
-
  public:
   using point_t = POINT_T;
+  using box_t = Box<Point<float, point_t::n_dim>>;
   using geometry_t = MultiPolygon<point_t, INDEX_T>;
   MultiPolygonArrayView() = default;
 

@@ -4,15 +4,18 @@
 #include "geoarrow/geoarrow.hpp"
 
 namespace gpuspatial {
+// N.B. Do not change the order of these enum values as they correspond to WKB format
 enum class GeometryType {
+  kGeometry, // union of all geometry types
   kPoint,
-  kMultiPoint,
   kLineString,
-  kMultiLineString,
   kPolygon,
+  kMultiPoint,
+  kMultiLineString,
   kMultiPolygon,
   kGeometryCollection,
   kBox,
+  kNull,
   kNumGeometryTypes
 };
 

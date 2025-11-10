@@ -27,6 +27,7 @@ class Point {
 
   DEV_HOST Point(const vec_t& data) : data_(data) {}
 
+  // Only enabled if SCALA_T is double.
   template <typename... Args>
   DEV_HOST Point(Args... args) : data_{args...} {
     // Ensure the correct number of arguments are passed
@@ -164,7 +165,18 @@ class Point {
 
   DEV_HOST_INLINE const scalar_t& operator[](int dim) const { return (&data_.x)[dim]; }
 
-  DEV_HOST_INLINE Box<point_t> get_mbr() const { return {*this, *this}; }
+  DEV_HOST_INLINE Box<Point<float, N_DIM>> get_mbr() const {
+    Point<float, N_DIM> min_corner, max_corner;
+    for (int dim = 0; dim < N_DIM; dim++) {
+      auto val = get_coordinate(dim);
+      auto min_val = next_float_from_double(val, -1, 1);
+      auto max_val = next_float_from_double(val, 1, 1);
+      min_corner.set_coordinate(dim, min_val);
+      max_corner.set_coordinate(dim, max_val);
+    }
+
+    return {min_corner, max_corner};
+  }
 
   DEV_HOST_INLINE bool covered_by(const OptixAabb& aabb) const {
     bool covered = true;
@@ -180,6 +192,14 @@ class Point {
 
   // For being called by templated methods
   DEV_HOST_INLINE uint32_t num_vertices() const { return 1; }
+
+  DEV_HOST_INLINE Point<float, N_DIM> as_float() const {
+    Point<float, N_DIM> result;
+    for (int dim = 0; dim < N_DIM; dim++) {
+      result.set_coordinate(dim, static_cast<float>(get_coordinate(dim)));
+    }
+    return result;
+  }
 
  private:
   vec_t data_;

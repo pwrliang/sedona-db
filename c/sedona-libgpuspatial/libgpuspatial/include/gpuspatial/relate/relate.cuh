@@ -974,7 +974,7 @@ DEV_HOST_INLINE int32_t relate(const MultiPoint<POINT_T>& geom1,
       if (poly.empty()) continue;
       retval |= IM__EXTER_INTER_2D | IM__EXTER_BOUND_1D;
       auto& mbr = poly.get_mbr();
-      if (!mbr.covers(pt)) {
+      if (!mbr.covers(pt.as_float())) {
         continue;
       }
 

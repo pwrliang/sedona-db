@@ -186,7 +186,7 @@ class GeometryGrouper {
         p_n_geoms_per_aabb[aabb_id] = idx_end - idx_begin;
 
         for (auto idx = idx_begin + lane_id; idx < idx_end_rup; idx += 32) {
-          Box<POINT_T> mbr;
+          Box<Point<float, POINT_T::n_dim>> mbr;
 
           auto warp_begin = idx - lane_id;
           auto warp_end = std::min(warp_begin + 32, idx_end);

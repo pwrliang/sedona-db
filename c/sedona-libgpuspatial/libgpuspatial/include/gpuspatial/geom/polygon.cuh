@@ -207,7 +207,7 @@ class Polygon {
   using point_t = POINT_T;
   using index_t = INDEX_T;
   using ring_t = LinearRing<point_t>;
-  using box_t = Box<POINT_T>;
+  using box_t = Box<Point<float, point_t::n_dim>>;
   using scalar_t = typename point_t::scalar_t;
 
   Polygon() = default;
@@ -415,10 +415,10 @@ class Polygon {
 template <typename POINT_T, typename INDEX_T>
 class PolygonArrayView {
   using index_t = INDEX_T;
-  using box_t = Box<POINT_T>;
 
  public:
   using point_t = POINT_T;
+  using box_t = Box<Point<float, point_t::n_dim>>;
   using geometry_t = Polygon<POINT_T, INDEX_T>;
   PolygonArrayView() = default;
 

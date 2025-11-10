@@ -177,10 +177,12 @@ class Box {
  private:
   point_t min_, max_;
 };
+template <typename SCALAR_T, int N_DIM>
+class Point;
 
 template <typename POINT_T, typename INDEX_T>
 class BoxArrayView {
-  using box_t = Box<POINT_T>;
+  using box_t = Box<Point<float, POINT_T::n_dim>>;
 
  public:
   using point_t = POINT_T;

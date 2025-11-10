@@ -18,7 +18,6 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
-
 namespace gpuspatial {
 namespace detail {
 static uint64_t bswap_64(uint64_t x) {
@@ -119,12 +118,12 @@ class PointSegment : public GeometrySegment {
     }
 
     size_t offset = 0;
-    auto points = std::make_unique<rmm::device_uvector<point_t>>(n_points, stream);
+    rmm::device_uvector<point_t> points(n_points, stream);
 
     for (uint32_t segment_idx = 0; segment_idx < segments.size(); segment_idx++) {
       const auto& segment = dynamic_cast<PointSegment&>(*segments[segment_idx]);
 
-      detail::async_copy_h2d(stream, segment.points_.data(), points->data() + offset,
+      detail::async_copy_h2d(stream, segment.points_.data(), points.data() + offset,
                              segment.points_.size());
 
       offset += segment.points_.size();
@@ -170,7 +169,7 @@ class MultiPointSegment : public GeometrySegment {
  public:
   using point_t = POINT_T;
   using index_t = INDEX_T;
-  using box_t = Box<point_t>;
+  using box_t = Box<Point<float, POINT_T::n_dim>>;
   using dev_geometries_t = DeviceGeometries<point_t, index_t>;
   constexpr static int n_dim = point_t::n_dim;
 
@@ -224,35 +223,33 @@ class MultiPointSegment : public GeometrySegment {
       max_seg_size = std::max(max_seg_size, segment.num_points_.size());
     }
 
-    auto points = std::make_unique<rmm::device_uvector<point_t>>(n_points, stream);
-    auto boxes = std::make_unique<rmm::device_uvector<box_t>>(size_num_points, stream);
+    rmm::device_uvector<point_t> points(n_points, stream);
+    rmm::device_uvector<box_t> boxes(size_num_points, stream);
     index_t init_prefix_sum = 0;
     size_t write_offset_boxes = 0;
     size_t write_offset_prefix_sum = 1;
     size_t write_offset_points = 0;
 
     rmm::device_uvector<index_t> tmp_buf(max_seg_size, stream);
-    auto prefix_sum =
-        std::make_unique<rmm::device_uvector<INDEX_T>>(size_num_points + 1, stream);
+    rmm::device_uvector<INDEX_T> prefix_sum(size_num_points + 1, stream);
 
-    prefix_sum->set_element_to_zero_async(0, stream);
+    prefix_sum.set_element_to_zero_async(0, stream);
 
     for (uint32_t segment_idx = 0; segment_idx < segments.size(); segment_idx++) {
       const auto& segment = dynamic_cast<MultiPointSegment&>(*segments[segment_idx]);
 
       detail::async_copy_h2d(stream, segment.points_.data(),
-                             points->data() + write_offset_points,
-                             segment.points_.size());
+                             points.data() + write_offset_points, segment.points_.size());
 
       detail::async_copy_h2d(stream, segment.mbrs_.data(),
-                             boxes->data() + write_offset_boxes, segment.mbrs_.size());
+                             boxes.data() + write_offset_boxes, segment.mbrs_.size());
 
       detail::async_copy_h2d(stream, segment.num_points_.data(), tmp_buf.data(),
                              segment.num_points_.size());
 
       thrust::inclusive_scan(rmm::exec_policy_nosync(stream), tmp_buf.begin(),
                              tmp_buf.begin() + segment.num_points_.size(),
-                             prefix_sum->begin() + write_offset_prefix_sum,
+                             prefix_sum.begin() + write_offset_prefix_sum,
                              init_prefix_sum, thrust::plus<index_t>());
 
       write_offset_boxes += segment.num_points_.size();
@@ -260,14 +257,14 @@ class MultiPointSegment : public GeometrySegment {
       write_offset_points += segment.points_.size();
 
       if (segment_idx != segments.size() - 1) {
-        init_prefix_sum = prefix_sum->element(write_offset_prefix_sum - 1, stream);
+        init_prefix_sum = prefix_sum.element(write_offset_prefix_sum - 1, stream);
       }
     }
 
     auto geometries = std::make_shared<dev_geometries_t>();
 
     geometries->type_ = GeometryType::kMultiPoint;
-    geometries->offsets_.multi_point_offsets.prefix_sum = std::move(prefix_sum);
+    geometries->offsets_.multi_point_offsets.ps_num_points = std::move(prefix_sum);
     geometries->points_ = std::move(points);
     geometries->mbrs_ = std::move(boxes);
 
@@ -311,7 +308,7 @@ template <typename POINT_T, typename INDEX_T>
 class LineStringSegment : public GeometrySegment {
   using point_t = POINT_T;
   using index_t = INDEX_T;
-  using box_t = Box<point_t>;
+  using box_t = Box<Point<float, POINT_T::n_dim>>;
   using dev_geometries_t = DeviceGeometries<point_t, index_t>;
   constexpr static int n_dim = point_t::n_dim;
 
@@ -357,8 +354,8 @@ class LineStringSegment : public GeometrySegment {
       max_seg_size = std::max(max_seg_size, segment.num_points_.size());
     }
 
-    auto points = std::make_unique<rmm::device_uvector<point_t>>(n_points, stream);
-    auto boxes = std::make_unique<rmm::device_uvector<box_t>>(size_num_points, stream);
+    rmm::device_uvector<point_t> points(n_points, stream);
+    rmm::device_uvector<box_t> boxes(size_num_points, stream);
     index_t init_prefix_sum = 0;
     size_t write_offset_boxes = 0;
     size_t write_offset_prefix_sum = 1;
@@ -374,11 +371,10 @@ class LineStringSegment : public GeometrySegment {
       const auto& segment = dynamic_cast<LineStringSegment&>(*segments[segment_idx]);
 
       detail::async_copy_h2d(stream, segment.points_.data(),
-                             points->data() + write_offset_points,
-                             segment.points_.size());
+                             points.data() + write_offset_points, segment.points_.size());
 
       detail::async_copy_h2d(stream, segment.mbrs_.data(),
-                             boxes->data() + write_offset_boxes, segment.mbrs_.size());
+                             boxes.data() + write_offset_boxes, segment.mbrs_.size());
 
       detail::async_copy_h2d(stream, segment.num_points_.data(), tmp_buf.data(),
                              segment.num_points_.size());
@@ -393,14 +389,14 @@ class LineStringSegment : public GeometrySegment {
       write_offset_points += segment.points_.size();
 
       if (segment_idx != segments.size() - 1) {
-        init_prefix_sum = prefix_sum->element(write_offset_prefix_sum - 1, stream);
+        init_prefix_sum = prefix_sum.element(write_offset_prefix_sum - 1, stream);
       }
     }
 
     auto geometries = std::make_shared<dev_geometries_t>();
 
     geometries->type_ = GeometryType::kLineString;
-    geometries->offsets_.line_string_offsets.prefix_sum = std::move(prefix_sum);
+    geometries->offsets_.line_string_offsets.ps_num_points = std::move(prefix_sum);
     geometries->points_ = std::move(points);
     geometries->mbrs_ = std::move(boxes);
 
@@ -503,8 +499,8 @@ class MultiLineStringSegment : public GeometrySegment {
           max_seg_size, std::max(segment.num_parts_.size(), segment.num_points_.size()));
     }
 
-    auto points = std::make_unique<rmm::device_uvector<point_t>>(n_points, stream);
-    auto boxes = std::make_unique<rmm::device_uvector<box_t>>(size_num_parts, stream);
+    rmm::device_uvector<point_t> points(n_points, stream);
+    rmm::device_uvector<box_t> boxes(size_num_parts, stream);
     index_t init_prefix_sum_geoms = 0;
     index_t init_prefix_sum_parts = 0;
     size_t write_offset_boxes = 0;
@@ -513,13 +509,11 @@ class MultiLineStringSegment : public GeometrySegment {
     size_t write_offset_points = 0;
 
     rmm::device_uvector<index_t> tmp_buf(max_seg_size, stream);
-    auto prefix_sum_geoms =
-        std::make_unique<rmm::device_uvector<index_t>>(size_num_parts + 1, stream);
-    auto prefix_sum_parts =
-        std::make_unique<rmm::device_uvector<index_t>>(size_num_points + 1, stream);
+    rmm::device_uvector<index_t> prefix_sum_geoms(size_num_parts + 1, stream);
+    rmm::device_uvector<index_t> prefix_sum_parts(size_num_points + 1, stream);
 
-    prefix_sum_geoms->set_element_to_zero_async(0, stream);
-    prefix_sum_parts->set_element_to_zero_async(0, stream);
+    prefix_sum_geoms.set_element_to_zero_async(0, stream);
+    prefix_sum_parts.set_element_to_zero_async(0, stream);
 
     for (size_t segment_idx = 0; segment_idx < segments.size(); segment_idx++) {
       const auto& segment = dynamic_cast<MultiLineStringSegment&>(*segments[segment_idx]);
@@ -563,9 +557,9 @@ class MultiLineStringSegment : public GeometrySegment {
     auto geometries = std::make_shared<dev_geometries_t>();
 
     geometries->type_ = GeometryType::kMultiLineString;
-    geometries->offsets_.multi_line_string_offsets.prefix_sum_geoms =
+    geometries->offsets_.multi_line_string_offsets.ps_num_parts =
         std::move(prefix_sum_geoms);
-    geometries->offsets_.multi_line_string_offsets.prefix_sum_parts =
+    geometries->offsets_.multi_line_string_offsets.ps_num_points =
         std::move(prefix_sum_parts);
     geometries->points_ = std::move(points);
     geometries->mbrs_ = std::move(boxes);
@@ -690,15 +684,13 @@ class PolygonSegment : public GeometrySegment {
 
     rmm::device_uvector<index_t> tmp_buf(max_seg_size, stream);
 
-    auto prefix_sum_polygons =
-        std::make_unique<rmm::device_uvector<index_t>>(size_num_rings + 1, stream);
-    auto prefix_sum_rings =
-        std::make_unique<rmm::device_uvector<index_t>>(size_num_vertices + 1, stream);
-    auto vertices = std::make_unique<rmm::device_uvector<point_t>>(num_points, stream);
-    auto boxes = std::make_unique<rmm::device_uvector<box_t>>(num_boxes, stream);
+    rmm::device_uvector<index_t> prefix_sum_polygons(size_num_rings + 1, stream);
+    rmm::device_uvector<index_t> prefix_sum_rings(size_num_vertices + 1, stream);
+    rmm::device_uvector<point_t> vertices(num_points, stream);
+    rmm::device_uvector<box_t> boxes(num_boxes, stream);
 
-    prefix_sum_polygons->set_element_to_zero_async(0, stream);
-    prefix_sum_rings->set_element_to_zero_async(0, stream);
+    prefix_sum_polygons.set_element_to_zero_async(0, stream);
+    prefix_sum_rings.set_element_to_zero_async(0, stream);
 
     size_t write_offset_points = 0;
     size_t write_offset_boxes = 0;
@@ -712,7 +704,7 @@ class PolygonSegment : public GeometrySegment {
       const auto& segment = dynamic_cast<PolygonSegment&>(*segments[segment_idx]);
 
       detail::async_copy_h2d(stream, segment.points_.data(),
-                             vertices->data() + write_offset_points,
+                             vertices.data() + write_offset_points,
                              segment.points_.size());
 
       detail::async_copy_h2d(stream, segment.mbrs_.data(),
@@ -723,14 +715,14 @@ class PolygonSegment : public GeometrySegment {
 
       thrust::inclusive_scan(rmm::exec_policy_nosync(stream), tmp_buf.begin(),
                              tmp_buf.begin() + segment.num_rings_.size(),
-                             prefix_sum_polygons->begin() + write_offset_parts,
+                             prefix_sum_polygons.begin() + write_offset_parts,
                              init_prefix_sum_parts, thrust::plus<index_t>());
 
       detail::async_copy_h2d(stream, segment.num_vertices_.data(), tmp_buf.data(),
                              segment.num_vertices_.size());
       thrust::inclusive_scan(rmm::exec_policy_nosync(stream), tmp_buf.begin(),
                              tmp_buf.begin() + segment.num_vertices_.size(),
-                             prefix_sum_rings->begin() + write_offset_rings,
+                             prefix_sum_rings.begin() + write_offset_rings,
                              init_prefix_sum_rings, thrust::plus<index_t>());
 
       write_offset_points += segment.points_.size();
@@ -740,8 +732,8 @@ class PolygonSegment : public GeometrySegment {
 
       if (segment_idx != segments.size() - 1) {
         init_prefix_sum_parts =
-            prefix_sum_polygons->element(write_offset_parts - 1, stream);
-        init_prefix_sum_rings = prefix_sum_rings->element(write_offset_rings - 1, stream);
+            prefix_sum_polygons.element(write_offset_parts - 1, stream);
+        init_prefix_sum_rings = prefix_sum_rings.element(write_offset_rings - 1, stream);
       }
     }
 
@@ -750,9 +742,8 @@ class PolygonSegment : public GeometrySegment {
     geometries->type_ = GeometryType::kPolygon;
     geometries->points_ = std::move(vertices);
     geometries->mbrs_ = std::move(boxes);
-    geometries->offsets_.polygon_offsets.prefix_sum_polygons =
-        std::move(prefix_sum_polygons);
-    geometries->offsets_.polygon_offsets.prefix_sum_rings = std::move(prefix_sum_rings);
+    geometries->offsets_.polygon_offsets.ps_num_rings = std::move(prefix_sum_polygons);
+    geometries->offsets_.polygon_offsets.ps_num_points = std::move(prefix_sum_rings);
 
     return geometries;
   }
@@ -904,18 +895,15 @@ class MultiPolygonSegment : public GeometrySegment {
 
     rmm::device_uvector<index_t> tmp_buf(max_seg_size, stream);
 
-    auto prefix_sum_geoms =
-        std::make_unique<rmm::device_uvector<index_t>>(size_num_parts + 1, stream);
-    auto prefix_sum_parts =
-        std::make_unique<rmm::device_uvector<index_t>>(size_num_rings + 1, stream);
-    auto prefix_sum_rings =
-        std::make_unique<rmm::device_uvector<index_t>>(size_num_vertices + 1, stream);
-    auto vertices = std::make_unique<rmm::device_uvector<point_t>>(num_points, stream);
-    auto boxes = std::make_unique<rmm::device_uvector<box_t>>(num_boxes, stream);
+    rmm::device_uvector<index_t> prefix_sum_geoms(size_num_parts + 1, stream);
+    rmm::device_uvector<index_t> prefix_sum_parts(size_num_rings + 1, stream);
+    rmm::device_uvector<index_t> prefix_sum_rings(size_num_vertices + 1, stream);
+    rmm::device_uvector<point_t> vertices(num_points, stream);
+    rmm::device_uvector<box_t> boxes(num_boxes, stream);
 
-    prefix_sum_geoms->set_element_to_zero_async(0, stream);
-    prefix_sum_parts->set_element_to_zero_async(0, stream);
-    prefix_sum_rings->set_element_to_zero_async(0, stream);
+    prefix_sum_geoms.set_element_to_zero_async(0, stream);
+    prefix_sum_parts.set_element_to_zero_async(0, stream);
+    prefix_sum_rings.set_element_to_zero_async(0, stream);
 
     size_t write_offset_points = 0;
     size_t write_offset_boxes = 0;
@@ -931,7 +919,7 @@ class MultiPolygonSegment : public GeometrySegment {
       const auto& segment = dynamic_cast<MultiPolygonSegment&>(*segments[segment_idx]);
 
       detail::async_copy_h2d(stream, segment.points_.data(),
-                             vertices->data() + write_offset_points,
+                             vertices.data() + write_offset_points,
                              segment.points_.size());
       detail::async_copy_h2d(stream, segment.mbrs_.data(),
                              boxes->data() + write_offset_boxes, segment.mbrs_.size());
@@ -940,21 +928,21 @@ class MultiPolygonSegment : public GeometrySegment {
                              segment.num_parts_.size());
       thrust::inclusive_scan(rmm::exec_policy_nosync(stream), tmp_buf.begin(),
                              tmp_buf.begin() + segment.num_parts_.size(),
-                             prefix_sum_geoms->begin() + write_offset_geoms,
+                             prefix_sum_geoms.begin() + write_offset_geoms,
                              init_prefix_sum_geoms, thrust::plus<index_t>());
 
       detail::async_copy_h2d(stream, segment.num_rings_.data(), tmp_buf.data(),
                              segment.num_rings_.size());
       thrust::inclusive_scan(rmm::exec_policy_nosync(stream), tmp_buf.begin(),
                              tmp_buf.begin() + segment.num_rings_.size(),
-                             prefix_sum_parts->begin() + write_offset_parts,
+                             prefix_sum_parts.begin() + write_offset_parts,
                              init_prefix_sum_parts, thrust::plus<index_t>());
 
       detail::async_copy_h2d(stream, segment.num_vertices_.data(), tmp_buf.data(),
                              segment.num_vertices_.size());
       thrust::inclusive_scan(rmm::exec_policy_nosync(stream), tmp_buf.begin(),
                              tmp_buf.begin() + segment.num_vertices_.size(),
-                             prefix_sum_rings->begin() + write_offset_rings,
+                             prefix_sum_rings.begin() + write_offset_rings,
                              init_prefix_sum_rings, thrust::plus<index_t>());
 
       write_offset_points += segment.points_.size();
@@ -964,9 +952,9 @@ class MultiPolygonSegment : public GeometrySegment {
       write_offset_rings += segment.num_vertices_.size();
 
       if (segment_idx != segments.size() - 1) {
-        init_prefix_sum_geoms = prefix_sum_geoms->element(write_offset_geoms - 1, stream);
-        init_prefix_sum_parts = prefix_sum_parts->element(write_offset_parts - 1, stream);
-        init_prefix_sum_rings = prefix_sum_rings->element(write_offset_rings - 1, stream);
+        init_prefix_sum_geoms = prefix_sum_geoms.element(write_offset_geoms - 1, stream);
+        init_prefix_sum_parts = prefix_sum_parts.element(write_offset_parts - 1, stream);
+        init_prefix_sum_rings = prefix_sum_rings.element(write_offset_rings - 1, stream);
       }
     }
 
@@ -975,11 +963,9 @@ class MultiPolygonSegment : public GeometrySegment {
     geometries->type_ = GeometryType::kMultiPolygon;
     geometries->points_ = std::move(vertices);
     geometries->mbrs_ = std::move(boxes);
-    geometries->offsets_.multi_polygon_offsets.prefix_sum_geoms =
-        std::move(prefix_sum_geoms);
-    geometries->offsets_.multi_polygon_offsets.prefix_sum_parts =
-        std::move(prefix_sum_parts);
-    geometries->offsets_.multi_polygon_offsets.prefix_sum_rings =
+    geometries->offsets_.multi_polygon_offsets.ps_num_parts = std::move(prefix_sum_geoms);
+    geometries->offsets_.multi_polygon_offsets.ps_num_rings = std::move(prefix_sum_parts);
+    geometries->offsets_.multi_polygon_offsets.ps_num_points =
         std::move(prefix_sum_rings);
 
     return geometries;
@@ -1315,7 +1301,7 @@ template <typename POINT_T, typename INDEX_T>
 class BoxSegment : public GeometrySegment {
   using point_t = POINT_T;
   using index_t = INDEX_T;
-  using box_t = Box<point_t>;
+  using box_t = Box<Point<float, point_t::n_dim>>;
   using dev_geometries_t = DeviceGeometries<point_t, index_t>;
   constexpr static int n_dim = point_t::n_dim;
 

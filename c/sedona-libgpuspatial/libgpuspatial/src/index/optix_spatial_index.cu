@@ -220,7 +220,7 @@ void OptixSpatialIndex<POINT_T, INDEX_T>::prepareLaunchParamsPointQuery(
   launch_params.aabbs1 = geometry_grouper.get_aabbs();
   launch_params.prefix_sum = geometry_grouper.get_prefix_sum();
   launch_params.reordered_indices = geometry_grouper.get_reordered_indices();
-  launch_params.mbrs1 = build_geometries_->get_mbrs();
+  // launch_params.mbrs1 = build_geometries_->get_mbrs();
   launch_params.points2 = ArrayView<point_t>(*ctx->stream_points);
   launch_params.handle = handle_;
   launch_params.ids = ctx->results.DeviceObject();
@@ -243,7 +243,7 @@ void OptixSpatialIndex<POINT_T, INDEX_T>::prepareLaunchParamsBoxQuery(
   launch_params.aabbs1 = geometry_grouper.get_aabbs();
   launch_params.prefix_sum = geometry_grouper.get_prefix_sum();
   launch_params.reordered_indices = geometry_grouper.get_reordered_indices();
-  launch_params.mbrs1 = build_geometries_->get_mbrs();
+  // launch_params.mbrs1 = build_geometries_->get_mbrs();
   launch_params.mbrs2 = ArrayView<box_t>(*ctx->stream_boxes);
   if (foward) {
     launch_params.handle = handle_;

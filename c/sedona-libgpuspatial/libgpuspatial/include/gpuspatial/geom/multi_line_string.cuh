@@ -9,7 +9,7 @@ template <typename POINT_T, typename INDEX_T>
 class MultiLineString {
  public:
   using point_t = POINT_T;
-  using box_t = Box<POINT_T>;
+  using box_t = Box<Point<float, point_t::n_dim>>;
 
   MultiLineString() = default;
 
@@ -47,10 +47,9 @@ class MultiLineString {
 
 template <typename POINT_T, typename INDEX_T>
 class MultiLineStringArrayView {
-  using box_t = Box<POINT_T>;
-
  public:
   using point_t = POINT_T;
+  using box_t = Box<Point<float, point_t::n_dim>>;
   using geometry_t = MultiLineString<POINT_T, INDEX_T>;
 
   MultiLineStringArrayView() = default;

@@ -3,6 +3,7 @@
 #include "gpuspatial/index/spatial_joiner.cuh"
 #include "gpuspatial/utils/markers.hpp"
 #include "gpuspatial/utils/stopwatch.h"
+#include "gpuspatial/loader/parallel_wkb_loader.h"
 #include "shaders/shader_id.hpp"
 
 #include <rmm/exec_policy.hpp>
@@ -23,7 +24,7 @@ void SpatialJoiner::Init(const Config* config) {
 
 void SpatialJoiner::Clear() {
   bvh_buffer_ = nullptr;
-  segments_.clear();
+  // segments_.clear();
   build_type_ = GeometryType::kNumGeometryTypes;
   geometry_grouper_.clear();
   build_geometries_ = nullptr;
@@ -33,49 +34,49 @@ void SpatialJoiner::PushBuild(const ArrowSchema* schema, const ArrowArray* array
                               int64_t offset, int64_t length) {
   IntervalRangeMarker marker(array->length, "PushBuild");
 
-  auto build_type = build_wkb_loader_.FetchGeometryType(array, offset, length);
+  // auto build_type = build_wkb_loader_.FetchGeometryType(array, offset, length);
   // is compatible type
-  if (build_type_ == GeometryType::kNumGeometryTypes) {
-    build_type_ = build_type;
-  } else if (build_type_ != build_type) {
-    build_type_ = GetCompatibleGeometryType(build_type_, build_type);
-  }
-
+  // if (build_type_ == GeometryType::kNumGeometryTypes) {
+  //   build_type_ = build_type;
+  // } else if (build_type_ != build_type) {
+  //   build_type_ = GetCompatibleGeometryType(build_type_, build_type);
+  // }
+#if 0
   switch (build_type_) {
     case GeometryType::kPoint: {
       auto seg = std::make_shared<PointSegment<point_t>>();
-      build_wkb_loader_.Load(array, 0, array->length, *seg);
+      // build_wkb_loader_.Load(array, 0, array->length, *seg);
       segments_.push_back(seg);
       break;
     }
     case GeometryType::kMultiPoint: {
       auto seg = std::make_shared<MultiPointSegment<point_t, index_t>>();
-      build_wkb_loader_.Load(array, 0, array->length, *seg);
+      // build_wkb_loader_.Load(array, 0, array->length, *seg);
       segments_.push_back(seg);
       break;
     }
     case GeometryType::kLineString: {
       auto seg = std::make_shared<LineStringSegment<point_t, index_t>>();
-      build_wkb_loader_.Load(array, 0, array->length, *seg);
+      // build_wkb_loader_.Load(array, 0, array->length, *seg);
       segments_.push_back(seg);
       break;
       break;
     }
     case GeometryType::kMultiLineString: {
       auto seg = std::make_shared<MultiLineStringSegment<point_t, index_t>>();
-      build_wkb_loader_.Load(array, 0, array->length, *seg);
+      // build_wkb_loader_.Load(array, 0, array->length, *seg);
       segments_.push_back(seg);
       break;
     }
     case GeometryType::kPolygon: {
       auto seg = std::make_shared<PolygonSegment<point_t, index_t>>();
-      build_wkb_loader_.Load(array, 0, array->length, *seg);
+      // build_wkb_loader_.Load(array, 0, array->length, *seg);
       segments_.push_back(seg);
       break;
     }
     case GeometryType::kMultiPolygon: {
       auto seg = std::make_shared<MultiPolygonSegment<point_t, index_t>>();
-      build_wkb_loader_.Load(array, 0, array->length, *seg);
+      // build_wkb_loader_.Load(array, 0, array->length, *seg);
       segments_.push_back(seg);
       break;
     }
@@ -83,12 +84,13 @@ void SpatialJoiner::PushBuild(const ArrowSchema* schema, const ArrowArray* array
       throw std::runtime_error("Unimplemented build type: " +
                                GeometryTypeToString(build_type_));
   }
+#endif
 }
 
 void SpatialJoiner::FinishBuilding() {
   RangeMarker marker(true, "FinishBuilding");
   auto stream = rmm::cuda_stream_default;
-
+#if 0
   switch (build_type_) {
     case GeometryType::kPoint: {
       build_geometries_ =
@@ -133,6 +135,8 @@ void SpatialJoiner::FinishBuilding() {
   re_config.bvh_fast_build = config_.prefer_fast_build;
   re_config.bvh_fast_compact = config_.compact;
   relate_engine_.set_config(re_config);
+#endif
+
 }
 
 void SpatialJoiner::PushStream(Context* base_ctx, const ArrowSchema* schema,
@@ -140,6 +144,7 @@ void SpatialJoiner::PushStream(Context* base_ctx, const ArrowSchema* schema,
                                Predicate predicate, std::vector<uint32_t>* build_indices,
                                std::vector<uint32_t>* stream_indices,
                                int32_t array_index_offset) {
+#if 0
   IntervalRangeMarker marker(length, "PushStream");
 
   auto* ctx = (SpatialJoinerContext*)base_ctx;
@@ -237,6 +242,7 @@ void SpatialJoiner::PushStream(Context* base_ctx, const ArrowSchema* schema,
   printf("parse %lf, alloc %lf, filter %lf, refine %lf, copy_res %lf ms\n", ctx->parse_ms,
          ctx->alloc_ms, ctx->filter_ms, ctx->refine_ms, ctx->copy_res_ms);
 #endif
+#endif
 }
 
 void SpatialJoiner::handleBuildPointStreamPoint(SpatialJoinerContext* ctx,
@@ -257,7 +263,7 @@ void SpatialJoiner::handleBuildPointStreamPoint(SpatialJoinerContext* ctx,
   launch_params.aabbs1 = geometry_grouper_.get_aabbs();
   launch_params.prefix_sum = geometry_grouper_.get_prefix_sum();
   launch_params.reordered_indices = geometry_grouper_.get_reordered_indices();
-  launch_params.mbrs1 = ArrayView<box_t>();  // no MBRs for point
+  // launch_params.mbrs1 = ArrayView<box_t>();  // no MBRs for point
   launch_params.points2 = ctx->stream_geometries->get_points();
   launch_params.handle = handle_;
   launch_params.ids = ctx->results.DeviceObject();
@@ -289,7 +295,7 @@ void SpatialJoiner::handleBuildBoxStreamPoint(SpatialJoinerContext* ctx,
   launch_params.aabbs1 = geometry_grouper_.get_aabbs();
   launch_params.prefix_sum = geometry_grouper_.get_prefix_sum();
   launch_params.reordered_indices = geometry_grouper_.get_reordered_indices();
-  launch_params.mbrs1 = build_geometries_->get_mbrs();
+  // launch_params.mbrs1 = build_geometries_->get_mbrs();
   launch_params.points2 = ctx->stream_geometries->get_points();
   launch_params.handle = handle_;
   launch_params.ids = ctx->results.DeviceObject();
@@ -327,7 +333,7 @@ void SpatialJoiner::handleBuildPointStreamBox(SpatialJoinerContext* ctx,
   launch_params.aabbs1 = grouper.get_aabbs();
   launch_params.prefix_sum = grouper.get_prefix_sum();
   launch_params.reordered_indices = grouper.get_reordered_indices();
-  launch_params.mbrs1 = ctx->stream_geometries->get_mbrs();
+  // launch_params.mbrs1 = ctx->stream_geometries->get_mbrs();
   launch_params.points2 = build_geometries_->get_points();
   launch_params.handle = handle;
   launch_params.ids = ctx->results.DeviceObject();
@@ -437,8 +443,8 @@ void SpatialJoiner::prepareLaunchParamsBoxQuery(SpatialJoinerContext* ctx, bool 
   launch_params.aabbs1 = geometry_grouper_.get_aabbs();
   launch_params.prefix_sum = geometry_grouper_.get_prefix_sum();
   launch_params.reordered_indices = geometry_grouper_.get_reordered_indices();
-  launch_params.mbrs1 = build_geometries_->get_mbrs();
-  launch_params.mbrs2 = ctx->stream_geometries->get_mbrs();
+  // launch_params.mbrs1 = build_geometries_->get_mbrs();
+  // launch_params.mbrs2 = ctx->stream_geometries->get_mbrs();
   if (foward) {
     launch_params.handle = handle_;
     ctx->shader_id = GetBoxQueryForwardShaderId<point_t>();

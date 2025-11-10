@@ -10,7 +10,7 @@ class LineString {
  public:
   using point_t = POINT_T;
   using line_segment_t = LineSegment<point_t>;
-  using box_t = Box<POINT_T>;
+  using box_t = Box<Point<float, point_t::n_dim>>;
 
   LineString() = default;
 
@@ -62,10 +62,9 @@ class LineString {
 
 template <typename POINT_T, typename INDEX_T>
 class LineStringArrayView {
-  using box_t = Box<POINT_T>;
-
  public:
   using point_t = POINT_T;
+  using box_t = Box<Point<float, point_t::n_dim>>;
   using geometry_t = LineString<POINT_T>;
 
   LineStringArrayView() = default;
