@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 #include <type_traits>
+
 #include "gpuspatial/utils/cuda_utils.h"
 
 namespace gpuspatial {

@@ -114,7 +114,8 @@ struct DeviceGeometries {
   };
 
   struct GeometryCollectionOffsets {
-    rmm::device_uvector<GeometryType> part_types{0, rmm::cuda_stream_default};
+    rmm::device_uvector<GeometryType> feature_types{0, rmm::cuda_stream_default};
+    rmm::device_uvector<INDEX_T> ps_num_geoms{0, rmm::cuda_stream_default};
     // content is the index to prefix_sum_parts
     rmm::device_uvector<INDEX_T> ps_num_parts{0, rmm::cuda_stream_default};
     // content is the index to prefix_sum_rings
@@ -129,6 +130,7 @@ struct DeviceGeometries {
     MultiLineStringOffsets multi_line_string_offsets;
     PolygonOffsets polygon_offsets;
     MultiPolygonOffsets multi_polygon_offsets;
+    GeometryCollectionOffsets geom_collection_offsets;
   };
 
   ArrayView<box_t> get_mbrs() const { return ArrayView<box_t>(mbrs_); }
@@ -144,7 +146,7 @@ struct DeviceGeometries {
   GeometryType get_geometry_type() const { return type_; }
 
   size_t num_features() const {
-    return num_features_;
+    return mbrs_.size() == 0 ? points_.size() : mbrs_.size();
   }
 
  private:
@@ -157,12 +159,12 @@ struct DeviceGeometries {
   friend class BoxSegment<POINT_T, INDEX_T>;
   friend class ParallelWkbLoader<POINT_T, INDEX_T>;
 
-  INDEX_T num_features_;
+  // a type for all geometries in this collection
   GeometryType type_;
-  // used by all the geometries
   rmm::device_uvector<point_t> points_{0, rmm::cuda_stream_default};
   Offsets offsets_;
-  // is null for points
+  // This should be empty if type_ is Point
+  // Otherwise, each feature should have a corresponding MBR
   rmm::device_uvector<box_t> mbrs_{0, rmm::cuda_stream_default};
 };
 

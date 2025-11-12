@@ -18,43 +18,91 @@
 
 namespace gpuspatial {
 namespace detail {
+// Copied from GeoArrow, it is faster than using GeoArrowWKBReaderRead
+struct WKBReaderPrivate {
+  const uint8_t* data;
+  int64_t size_bytes;
+  const uint8_t* data0;
+  int need_swapping;
+  GeoArrowGeometry geom;
+};
+
+static int WKBReaderReadEndian(struct WKBReaderPrivate* s, struct GeoArrowError* error) {
+  if (s->size_bytes > 0) {
+    s->need_swapping = s->data[0] != GEOARROW_NATIVE_ENDIAN;
+    s->data++;
+    s->size_bytes--;
+    return GEOARROW_OK;
+  } else {
+    GeoArrowErrorSet(error, "Expected endian byte but found end of buffer at byte %ld",
+                     (long)(s->data - s->data0));
+    return EINVAL;
+  }
+}
+
+static int WKBReaderReadUInt32(struct WKBReaderPrivate* s, uint32_t* out,
+                               struct GeoArrowError* error) {
+  if (s->size_bytes >= 4) {
+    memcpy(out, s->data, sizeof(uint32_t));
+    s->data += sizeof(uint32_t);
+    s->size_bytes -= sizeof(uint32_t);
+    if (s->need_swapping) {
+      *out = __builtin_bswap32(*out);
+    }
+    return GEOARROW_OK;
+  } else {
+    GeoArrowErrorSet(error, "Expected uint32 but found end of buffer at byte %ld",
+                     (long)(s->data - s->data0));
+    return EINVAL;
+  }
+}
+/**
+ * @brief This is a general structure to hold parsed geometries on host side
+ * There are three modes: Single geometry type, Multi geometry type, GeometryCollection
+ * Point: using vertices only
+ * LineString: using num_points and vertices
+ * Polygon: using num_rings, num_points and vertices
+ * MultiPoint: using num_points
+ * MultiLineString: using num_parts, num_points and vertices
+ * MultiPolygon: using num_parts, num_rings, num_points and vertices
+ * GeometryCollection: using all vectors. Empty geometry are treated at the last level
+ * with num_points = 0 but still having one entry in num_geoms, num_parts and num_rings
+ */
 template <typename POINT_T, typename INDEX_T>
 struct HostParsedGeometries {
   constexpr static int n_dim = POINT_T::n_dim;
   using mbr_t = Box<Point<float, n_dim> >;
-  INDEX_T num_features;  // num features including nulls in Arrow table
   // each feature should have only one type except GeometryCollection
   std::vector<GeometryType> feature_types;
-  // Should be size of num_features
   // This number should be one except GeometryCollection, which should be unnested # of
   // geometries
+  // the size of this vector is equal to number of features
   std::vector<INDEX_T> num_geoms;
   std::vector<INDEX_T> num_parts;
   std::vector<INDEX_T> num_rings;
   std::vector<INDEX_T> num_points;
   std::vector<POINT_T> vertices;
   std::vector<mbr_t> mbrs;
-  bool has_mixed_types = false;
+  bool multi = false;
   bool has_geometry_collection = false;
   bool create_mbr = false;
 
-  HostParsedGeometries(bool has_mixed_types_, bool has_geometry_collection_,
-                       bool create_mbr_) {
-    has_mixed_types = has_mixed_types_;
+  HostParsedGeometries(bool multi_, bool has_geometry_collection_, bool create_mbr_) {
+    // Multi and GeometryCollection are mutually exclusive
+    assert(!(multi_ && has_geometry_collection_));
+    multi = multi_;
     has_geometry_collection = has_geometry_collection_;
-    if (has_geometry_collection) {
-      has_mixed_types = true;
-    }
     create_mbr = create_mbr_;
   }
 
   void AddGeometry(const GeoArrowGeometryView* geom) {
     if (geom == nullptr) {
-      // TODO
+      throw std::runtime_error("Null geometry not supported yet");
       return;
     }
 
     auto root = geom->root;
+    const GeoArrowGeometryNode* finish = nullptr;
     // All should be one except for GeometryCollection
     uint32_t ngeoms =
         root->geometry_type == GEOARROW_GEOMETRY_TYPE_GEOMETRYCOLLECTION ? 0 : 1;
@@ -64,35 +112,38 @@ struct HostParsedGeometries {
 
     switch (root->geometry_type) {
       case GEOARROW_GEOMETRY_TYPE_POINT: {
-        addPoint(root, p_mbr);
+        finish = addPoint(root, p_mbr);
         break;
       }
       case GEOARROW_GEOMETRY_TYPE_LINESTRING: {
-        addLineString(root, p_mbr);
+        finish = addLineString(root, p_mbr);
         break;
       }
       case GEOARROW_GEOMETRY_TYPE_POLYGON: {
-        addPolygon(root, p_mbr);
+        finish = addPolygon(root, p_mbr);
         break;
       }
       case GEOARROW_GEOMETRY_TYPE_MULTIPOINT: {
-        addMultiPoint(root, p_mbr);
+        finish = addMultiPoint(root, p_mbr);
         break;
       }
       case GEOARROW_GEOMETRY_TYPE_MULTILINESTRING: {
-        addMultiLineString(root, p_mbr);
+        finish = addMultiLineString(root, p_mbr);
         break;
       }
       case GEOARROW_GEOMETRY_TYPE_MULTIPOLYGON: {
-        addMultiPolygon(root, p_mbr);
+        finish = addMultiPolygon(root, p_mbr);
         break;
       }
       case GEOARROW_GEOMETRY_TYPE_GEOMETRYCOLLECTION: {
-        // Complexity: O(size_nodes * max_depth)
-        addGeometryCollection(root, geom->size_nodes, 0, p_mbr, ngeoms);
+        assert(has_geometry_collection);
+        finish = addGeometryCollection(root, p_mbr, ngeoms);
         break;
       }
+      default:
+        throw std::runtime_error("Unsupported geometry type in GeoArrowGeometryView");
     }
+    assert(finish == root + geom->size_nodes);
     if (has_geometry_collection) {
       num_geoms.push_back(ngeoms);
     }
@@ -102,30 +153,37 @@ struct HostParsedGeometries {
   }
 
  private:
-  void addPoint(const GeoArrowGeometryNode* node, mbr_t* mbr) {
+  const GeoArrowGeometryNode* addPoint(const GeoArrowGeometryNode* node, mbr_t* mbr) {
+    assert(node->geometry_type == GEOARROW_GEOMETRY_TYPE_POINT);
     auto point = readPoint(node);
-    if (has_mixed_types) {
+    if (has_geometry_collection) {
       feature_types.push_back(GeometryType::kPoint);
       num_parts.push_back(1);
       num_rings.push_back(1);
+      num_points.push_back(1);
+    } else if (multi) {
       num_points.push_back(1);
     }
     vertices.push_back(point);
     if (mbr != nullptr) {
       mbr->Expand(point.as_float());
     }
+    return node + 1;
   }
 
-  void addMultiPoint(const GeoArrowGeometryNode* node, mbr_t* mbr) {
+  const GeoArrowGeometryNode* addMultiPoint(const GeoArrowGeometryNode* node,
+                                            mbr_t* mbr) {
+    assert(node->geometry_type == GEOARROW_GEOMETRY_TYPE_MULTIPOINT);
     auto np = node->size;
-    if (has_mixed_types) {
+    if (has_geometry_collection) {
       feature_types.push_back(GeometryType::kMultiPoint);
-      num_parts.push_back(np);
+      num_parts.push_back(1);
       num_rings.push_back(1);
-      num_points.push_back(1);
+      num_points.push_back(np);
     } else {
       num_points.push_back(np);
     }
+
     for (uint32_t i = 0; i < node->size; i++) {
       auto point_node = node + i + 1;
       auto point = readPoint(point_node);
@@ -134,107 +192,131 @@ struct HostParsedGeometries {
         mbr->Expand(point.as_float());
       }
     }
+    return node + node->size + 1;
   }
 
-  void addLineString(const GeoArrowGeometryNode* node, mbr_t* mbr) {
-    if (has_mixed_types) {
+  const GeoArrowGeometryNode* addLineString(const GeoArrowGeometryNode* node,
+                                            mbr_t* mbr) {
+    assert(node->geometry_type == GEOARROW_GEOMETRY_TYPE_LINESTRING);
+    if (has_geometry_collection) {
       feature_types.push_back(GeometryType::kLineString);
       num_parts.push_back(1);
       num_rings.push_back(1);
+    } else if (multi) {
+      num_parts.push_back(1);
     }
     // push_back to num_points and vertices
-    processLineString(node, mbr);
+    return processLineString(node, mbr);
   }
 
-  void addMultiLineString(const GeoArrowGeometryNode* node, mbr_t* mbr) {
-    if (has_mixed_types) {
+  const GeoArrowGeometryNode* addMultiLineString(const GeoArrowGeometryNode* node,
+                                                 mbr_t* mbr) {
+    assert(node->geometry_type == GEOARROW_GEOMETRY_TYPE_MULTILINESTRING);
+    if (has_geometry_collection) {
       feature_types.push_back(GeometryType::kMultiLineString);
+      // Treat the whole MultiLineString as one part, where each linestring is a ring
+      num_parts.push_back(1);
+      num_rings.push_back(node->size);
+    } else {
       num_parts.push_back(node->size);
-      num_rings.push_back(1);
     }
-
+    const GeoArrowGeometryNode* end = node + 1;
     for (uint32_t i = 0; i < node->size; i++) {
       auto* part_node = node + i + 1;
       // push_back to num_points and vertices
-      processLineString(part_node, mbr);
+      end = processLineString(part_node, mbr);
     }
+    return end;
   }
 
-  void addPolygon(const GeoArrowGeometryNode* node, mbr_t* mbr) {
-    if (has_mixed_types) {
+  const GeoArrowGeometryNode* addPolygon(const GeoArrowGeometryNode* node, mbr_t* mbr) {
+    assert(node->geometry_type == GEOARROW_GEOMETRY_TYPE_POLYGON);
+    if (has_geometry_collection) {
       feature_types.push_back(GeometryType::kPolygon);
       num_parts.push_back(1);
+      num_rings.push_back(node->size);
+    } else if (multi) {
+      num_parts.push_back(1);
+      num_rings.push_back(node->size);
+    } else {
+      num_rings.push_back(node->size);
     }
-    num_rings.push_back(node->size);
+
+    auto ring_node = node + 1;
     // visit rings
     for (uint32_t i = 0; i < node->size; i++) {
-      auto ring_node = node + i + 1;
       // push_back to num_points and vertices
-      processLineString(ring_node, mbr);
+      ring_node = processLineString(ring_node, mbr);
     }
+    return ring_node;
   }
 
-  void addMultiPolygon(const GeoArrowGeometryNode* node, mbr_t* mbr) {
-    if (has_mixed_types) {
+  const GeoArrowGeometryNode* addMultiPolygon(const GeoArrowGeometryNode* begin,
+                                              mbr_t* mbr) {
+    assert(begin->geometry_type == GEOARROW_GEOMETRY_TYPE_MULTIPOLYGON);
+    if (has_geometry_collection) {
       feature_types.push_back(GeometryType::kMultiPolygon);
     }
-    uint32_t num_polygons = 0;
-    for (auto* curr_node = node; curr_node != node + node->size; curr_node++) {
-      if (node->geometry_type == GEOARROW_GEOMETRY_TYPE_POLYGON) {
-        num_rings.push_back(curr_node->size);
-        num_polygons++;
-        // visit rings
-        for (uint32_t i = 0; i < curr_node->size; i++) {
-          auto ring_node = curr_node + i + 1;
-          // push_back to num_points and vertices
-          processLineString(ring_node, mbr);
-        }
+    num_parts.push_back(begin->size);
+    auto* polygon_node = begin + 1;
+    // for each polygon
+    for (auto i = 0; i < begin->size; i++) {
+      num_rings.push_back(polygon_node->size);
+      auto* ring_node = polygon_node + 1;
+      // visit rings
+      for (int j = 0; j < polygon_node->size; j++) {
+        ring_node = processLineString(ring_node, mbr);
       }
+      polygon_node = ring_node;
     }
-    num_parts.push_back(num_polygons);
+    return polygon_node;
   }
 
-  void addGeometryCollection(const GeoArrowGeometryNode* root, int n_nodes, int depth,
-                             mbr_t* mbr, uint32_t& ngeoms) {
-    for (auto curr_node = root; curr_node != root + n_nodes; curr_node++) {
-      if (curr_node->level != depth + 1) continue;
+  const GeoArrowGeometryNode* addGeometryCollection(const GeoArrowGeometryNode* begin,
+                                                    mbr_t* mbr, uint32_t& ngeoms) {
+    assert(begin->geometry_type == GEOARROW_GEOMETRY_TYPE_GEOMETRYCOLLECTION);
+
+    auto curr_node = begin + 1;
+    for (int i = 0; i < begin->size; i++) {
       if (curr_node->geometry_type != GEOARROW_GEOMETRY_TYPE_GEOMETRYCOLLECTION) {
         ngeoms++;
       }
       switch (curr_node->geometry_type) {
         case GEOARROW_GEOMETRY_TYPE_POINT: {
-          addPoint(curr_node, mbr);
+          curr_node = addPoint(curr_node, mbr);
           break;
         }
         case GEOARROW_GEOMETRY_TYPE_LINESTRING: {
-          addLineString(curr_node, mbr);
+          curr_node = addLineString(curr_node, mbr);
           break;
         }
         case GEOARROW_GEOMETRY_TYPE_POLYGON: {
-          addPolygon(curr_node, mbr);
+          curr_node = addPolygon(curr_node, mbr);
           break;
         }
         case GEOARROW_GEOMETRY_TYPE_MULTIPOINT: {
-          addMultiPoint(curr_node, mbr);
+          curr_node = addMultiPoint(curr_node, mbr);
           break;
         }
         case GEOARROW_GEOMETRY_TYPE_MULTILINESTRING: {
-          addMultiLineString(curr_node, mbr);
+          curr_node = addMultiLineString(curr_node, mbr);
           break;
         }
         case GEOARROW_GEOMETRY_TYPE_MULTIPOLYGON: {
-          addMultiPolygon(curr_node, mbr);
+          curr_node = addMultiPolygon(curr_node, mbr);
           break;
         }
         case GEOARROW_GEOMETRY_TYPE_GEOMETRYCOLLECTION: {
-          addGeometryCollection(curr_node, n_nodes, depth + 1, mbr, ngeoms);
+          curr_node = addGeometryCollection(curr_node, mbr, ngeoms);
           break;
         }
       }
     }
+    return curr_node;
   }
 
   POINT_T readPoint(const GeoArrowGeometryNode* point_node) {
+    assert(point_node->geometry_type == GEOARROW_GEOMETRY_TYPE_POINT);
     bool swap_endian = (point_node->flags & GEOARROW_GEOMETRY_NODE_FLAG_SWAP_ENDIAN);
     POINT_T point;
 
@@ -254,7 +336,9 @@ struct HostParsedGeometries {
     return point;
   }
 
-  void processLineString(const GeoArrowGeometryNode* node, mbr_t* mbr) {
+  const GeoArrowGeometryNode* processLineString(const GeoArrowGeometryNode* node,
+                                                mbr_t* mbr) {
+    assert(node->geometry_type == GEOARROW_GEOMETRY_TYPE_LINESTRING);
     const uint8_t* p_coord[n_dim];
     int32_t d_coord[n_dim];
 
@@ -286,6 +370,8 @@ struct HostParsedGeometries {
         mbr->Expand(point.as_float());
       }
     }
+
+    return node + 1;
   }
 };
 
@@ -293,11 +379,10 @@ template <typename POINT_T, typename INDEX_T>
 struct DeviceParsedGeometries {
   constexpr static int n_dim = POINT_T::n_dim;
   using mbr_t = Box<Point<float, n_dim> >;
-  INDEX_T num_features;  // num features including nulls in Arrow table
   // will be moved to DeviceGeometries
   rmm::device_uvector<GeometryType> feature_types{0, rmm::cuda_stream_default};
-  rmm::device_uvector<INDEX_T> num_geos{0, rmm::cuda_stream_default};
-  // These are temp vectors during parsing
+  // These are temp vectors during parsing, which will be used to calculate offsets
+  rmm::device_uvector<INDEX_T> num_geoms{0, rmm::cuda_stream_default};
   rmm::device_uvector<INDEX_T> num_parts{0, rmm::cuda_stream_default};
   rmm::device_uvector<INDEX_T> num_rings{0, rmm::cuda_stream_default};
   rmm::device_uvector<INDEX_T> num_points{0, rmm::cuda_stream_default};
@@ -306,71 +391,28 @@ struct DeviceParsedGeometries {
   rmm::device_uvector<mbr_t> mbrs{0, rmm::cuda_stream_default};
 
   void Init(const rmm::device_async_resource_ref& mr) {
-    num_features = 0;
     // Set MR of temp vectors
+    num_geoms = rmm::device_uvector<INDEX_T>(0, rmm::cuda_stream_default, mr);
     num_parts = rmm::device_uvector<INDEX_T>(0, rmm::cuda_stream_default, mr);
     num_rings = rmm::device_uvector<INDEX_T>(0, rmm::cuda_stream_default, mr);
     num_points = rmm::device_uvector<INDEX_T>(0, rmm::cuda_stream_default, mr);
   }
 
   void Clear(rmm::cuda_stream_view stream, bool free_memory = true) {
-    num_features = 0;
     feature_types.resize(0, stream);
-    num_geos.resize(0, stream);
+    num_geoms.resize(0, stream);
     num_parts.resize(0, stream);
     num_rings.resize(0, stream);
     num_points.resize(0, stream);
     vertices.resize(0, stream);
     if (free_memory) {
       feature_types.shrink_to_fit(stream);
-      num_geos.shrink_to_fit(stream);
+      num_geoms.shrink_to_fit(stream);
       num_parts.shrink_to_fit(stream);
       num_rings.shrink_to_fit(stream);
       num_points.shrink_to_fit(stream);
       vertices.shrink_to_fit(stream);
     }
-  }
-
-  GeometryType InferGeometryType(rmm::cuda_stream_view stream) const {
-    rmm::device_uvector<int> d_types((int)GeometryType::kNumGeometryTypes, stream);
-    auto* p_types = d_types.data();
-    thrust::fill(rmm::exec_policy_nosync(stream), d_types.begin(), d_types.end(), 0);
-    thrust::for_each(rmm::exec_policy_nosync(stream), feature_types.begin(),
-                     feature_types.end(), [=] __device__(GeometryType type) {
-                       if (type != GeometryType::kNull)
-                         p_types[static_cast<int>(type)] = 1;
-                     });
-    std::vector<int> h_types(d_types.size());
-    detail::async_copy_d2h(stream, d_types.data(), h_types.data(), d_types.size());
-    stream.synchronize();
-    std::unordered_set<GeometryType> unique_types(h_types.begin(), h_types.end());
-    GeometryType final_type;
-
-    switch (unique_types.size()) {
-      case 0:
-        final_type = GeometryType::kNull;
-        break;
-      case 1:
-        final_type = *unique_types.begin();
-        break;
-      case 2: {
-        if (unique_types.count(GeometryType::kPoint) &&
-            unique_types.count(GeometryType::kMultiPoint)) {
-          final_type = GeometryType::kMultiPoint;
-        } else if (unique_types.count(GeometryType::kLineString) &&
-                   unique_types.count(GeometryType::kMultiLineString)) {
-          final_type = GeometryType::kMultiLineString;
-        } else if (unique_types.count(GeometryType::kPolygon) &&
-                   unique_types.count(GeometryType::kMultiPolygon)) {
-          final_type = GeometryType::kMultiPolygon;
-        } else {
-          final_type = GeometryType::kGeometryCollection;
-        }
-      }
-      default:
-        final_type = GeometryType::kGeometryCollection;
-    }
-    return final_type;
   }
 };
 }  // namespace detail
@@ -378,6 +420,7 @@ struct DeviceParsedGeometries {
 template <typename POINT_T, typename INDEX_T>
 class ParallelWkbLoader {
   constexpr static int n_dim = POINT_T::n_dim;
+  using scalar_t = typename POINT_T::scalar_t;
   // using low precision for memory saving
   using mbr_t = Box<Point<float, n_dim> >;
 
@@ -394,7 +437,7 @@ class ParallelWkbLoader {
     bool temporary_memory_spilling = false;
   };
 
-  void Init(const Config& config) {
+  void Init(const Config& config = Config()) {
     ArrowArrayViewInitFromType(&array_view_, NANOARROW_TYPE_BINARY);
     config_ = config;
     auto managed_mr = std::make_shared<rmm::mr::managed_memory_resource>();
@@ -402,9 +445,13 @@ class ParallelWkbLoader {
     auto mr = config_.temporary_memory_spilling ? *managed_mr : default_mr;
 
     geoms_.Init(mr);
+    geometry_type_ = GeometryType::kNull;
   }
 
-  void Clear(rmm::cuda_stream_view stream) { geoms_.Clear(stream); }
+  void Clear(rmm::cuda_stream_view stream) {
+    geometry_type_ = GeometryType::kNull;
+    geoms_.Clear(stream);
+  }
 
   void Parse(rmm::cuda_stream_view stream, const ArrowArray* array, int64_t offset,
              int64_t length) {
@@ -417,16 +464,17 @@ class ParallelWkbLoader {
     auto chunk_size = config_.chunk_size;
     auto n_chunks = (length + chunk_size - 1) / chunk_size;
 
-    bool has_mixed_types = false;
-    bool has_geometry_collection = false;
-    bool create_mbr = false;
-    // TODO : Pre-scan to check mixed types and GeometryCollection
+    updateGeometryType(offset, length);
+    bool multi = geometry_type_ == GeometryType::kMultiPoint ||
+                 geometry_type_ == GeometryType::kMultiLineString ||
+                 geometry_type_ == GeometryType::kMultiPolygon;
+    bool has_geometry_collection = geometry_type_ == GeometryType::kGeometryCollection;
+    bool create_mbr = geometry_type_ != GeometryType::kPoint;
 
     // reserve space
-    geoms_.num_features = length;
     geoms_.num_parts.reserve(length, stream);
     geoms_.vertices.reserve(estimateNumPoints(array, offset, length), stream);
-    geoms_.mbrs.reserve(array->length, stream);
+    if (create_mbr) geoms_.mbrs.reserve(array->length, stream);
 
     // Batch processing to reduce the peak memory usage
     for (int64_t chunk = 0; chunk < n_chunks; chunk++) {
@@ -450,7 +498,7 @@ class ParallelWkbLoader {
           auto thread_work_end =
               std::min(chunk_end, thread_work_start + thread_work_size);
           detail::HostParsedGeometries<POINT_T, INDEX_T> local_geoms(
-              has_mixed_types, has_geometry_collection, create_mbr);
+              multi, has_geometry_collection, create_mbr);
           GeoArrowWKBReader reader;
           GeoArrowError error;
           GEOARROW_THROW_NOT_OK(nullptr, GeoArrowWKBReaderInit(&reader));
@@ -469,6 +517,9 @@ class ParallelWkbLoader {
                   &error,
                   GeoArrowWKBReaderRead(&reader, {item.data.as_uint8, item.size_bytes},
                                         &geom, &error));
+              if (work_offset == 7) {
+                printf("");
+              }
               local_geoms.AddGeometry(&geom);
             }
           }
@@ -477,6 +528,7 @@ class ParallelWkbLoader {
           cv.wait(lock, [&]() { return tid == next_thread_id_to_run; });
 
           appendVector(stream, geoms_.feature_types, local_geoms.feature_types);
+          appendVector(stream, geoms_.num_geoms, local_geoms.num_geoms);
           appendVector(stream, geoms_.num_parts, local_geoms.num_parts);
           appendVector(stream, geoms_.num_rings, local_geoms.num_rings);
           appendVector(stream, geoms_.num_points, local_geoms.num_points);
@@ -495,8 +547,9 @@ class ParallelWkbLoader {
 
   DeviceGeometries<POINT_T, INDEX_T> Finish(rmm::cuda_stream_view stream) {
     // Calculate one by one to reduce peak memory
-    // TODO: finsh loop over layers
-    auto n_features = geoms_.num_features;
+    rmm::device_uvector<INDEX_T> ps_num_geoms(0, stream);
+    calcPrefixSum(stream, geoms_.num_geoms, ps_num_geoms);
+
     rmm::device_uvector<INDEX_T> ps_num_parts(0, stream);
     calcPrefixSum(stream, geoms_.num_parts, ps_num_parts);
 
@@ -506,22 +559,178 @@ class ParallelWkbLoader {
     rmm::device_uvector<INDEX_T> ps_num_points(0, stream);
     calcPrefixSum(stream, geoms_.num_points, ps_num_points);
 
+    if constexpr (std::is_same_v<scalar_t, double>) {
+      thrust::transform(
+          rmm::exec_policy_nosync(stream), geoms_.mbrs.begin(), geoms_.mbrs.end(),
+          geoms_.mbrs.begin(), [] __device__(const mbr_t& mbr) -> mbr_t {
+            Point<float, n_dim> min_corner, max_corner;
+            for (int dim = 0; dim < n_dim; dim++) {
+              auto min_val = mbr.get_min(dim);
+              auto max_val = mbr.get_max(dim);
+              // Two rounds of next_float to ensure the MBR fully covers the original
+              // geometry, refer to RayJoin paper
+              min_corner[dim] = min_val - next_float_from_double(min_val, -1, 2);
+              max_corner[dim] = max_val + next_float_from_double(max_val, 1, 2);
+            }
+            return {min_corner, max_corner};
+          });
+    }
+
     DeviceGeometries<POINT_T, INDEX_T> device_geometries;
-    device_geometries.num_features = n_features;
-    device_geometries.type_ = geoms_.InferGeometryType(stream);
+    device_geometries.type_ = geometry_type_;
     device_geometries.points_ = std::move(geoms_.vertices);
     device_geometries.mbrs_ = std::move(geoms_.mbrs);
+    // move type specific data
+    switch (geometry_type_) {
+      case GeometryType::kPoint: {
+        // Do nothing, all points have been moved
+        break;
+      }
+      case GeometryType::kLineString: {
+        device_geometries.offsets_.line_string_offsets.ps_num_points =
+            std::move(ps_num_points);
+        break;
+      }
+      case GeometryType::kPolygon: {
+        device_geometries.offsets_.polygon_offsets.ps_num_rings = std::move(ps_num_rings);
+        device_geometries.offsets_.polygon_offsets.ps_num_points =
+            std::move(ps_num_points);
+        break;
+      }
+      case GeometryType::kMultiPoint: {
+        device_geometries.offsets_.multi_point_offsets.ps_num_points =
+            std::move(ps_num_points);
+        break;
+      }
+      case GeometryType::kMultiLineString: {
+        device_geometries.offsets_.multi_line_string_offsets.ps_num_parts =
+            std::move(ps_num_parts);
+        device_geometries.offsets_.multi_line_string_offsets.ps_num_points =
+            std::move(ps_num_points);
+        break;
+      }
+      case GeometryType::kMultiPolygon: {
+        device_geometries.offsets_.multi_polygon_offsets.ps_num_parts =
+            std::move(ps_num_parts);
+        device_geometries.offsets_.multi_polygon_offsets.ps_num_rings =
+            std::move(ps_num_rings);
+        device_geometries.offsets_.multi_polygon_offsets.ps_num_points =
+            std::move(ps_num_points);
+        break;
+      }
+      case GeometryType::kGeometryCollection: {
+        device_geometries.offsets_.geom_collection_offsets.feature_types =
+            std::move(geoms_.feature_types);
+        device_geometries.offsets_.geom_collection_offsets.ps_num_geoms =
+            std::move(ps_num_geoms);
+        device_geometries.offsets_.geom_collection_offsets.ps_num_parts =
+            std::move(ps_num_parts);
+        device_geometries.offsets_.geom_collection_offsets.ps_num_rings =
+            std::move(ps_num_rings);
+        device_geometries.offsets_.geom_collection_offsets.ps_num_points =
+            std::move(ps_num_points);
+        break;
+      }
+    }
     return std::move(device_geometries);
   }
 
  private:
   Config config_;
   ArrowArrayView array_view_;
+  GeometryType geometry_type_;
   detail::DeviceParsedGeometries<POINT_T, INDEX_T> geoms_;
+
+  void updateGeometryType(int64_t offset, int64_t length) {
+    if (geometry_type_ == GeometryType::kGeometryCollection) {
+      // already the most generic type
+      return;
+    }
+
+    GeoArrowWKBReader reader;
+    GeoArrowError error;
+    GEOARROW_THROW_NOT_OK(nullptr, GeoArrowWKBReaderInit(&reader));
+
+    std::vector<bool> type_flags(8 /*WKB types*/, false);
+    std::vector<std::thread> workers;
+    auto thread_work_size = (length + config_.parallelism - 1) / config_.parallelism;
+
+    for (int thread_idx = 0; thread_idx < config_.parallelism; thread_idx++) {
+      auto run = [&](int tid) {
+        auto thread_work_start = tid * thread_work_size;
+        auto thread_work_end = std::min(length, thread_work_start + thread_work_size);
+
+        for (uint32_t work_offset = thread_work_start; work_offset < thread_work_end;
+             work_offset++) {
+          auto arrow_offset = work_offset + offset;
+          // handle null value
+          if (ArrowArrayViewIsNull(&array_view_, arrow_offset)) {
+            continue;
+          }
+          auto item = ArrowArrayViewGetBytesUnsafe(&array_view_, arrow_offset);
+          auto* s = (struct detail::WKBReaderPrivate*)reader.private_data;
+
+          s->data = item.data.as_uint8;
+          s->data0 = s->data;
+          s->size_bytes = item.size_bytes;
+
+          NANOARROW_THROW_NOT_OK(detail::WKBReaderReadEndian(s, &error));
+          uint32_t geometry_type;
+          NANOARROW_THROW_NOT_OK(detail::WKBReaderReadUInt32(s, &geometry_type, &error));
+          type_flags[geometry_type] = true;
+        }
+      };
+      workers.emplace_back(run, thread_idx);
+    }
+    for (auto& worker : workers) {
+      worker.join();
+    }
+
+    std::unordered_set<GeometryType> types;
+    // include existing geometry type
+    if (geometry_type_ != GeometryType::kNull) {
+      types.insert(geometry_type_);
+    }
+
+    for (int i = 1; i <= 7; i++) {
+      if (type_flags[i]) {
+        types.insert(static_cast<GeometryType>(i));
+      }
+    }
+
+    GeometryType final_type;
+    // Infer a generic type that can represent the current and previous types
+    switch (types.size()) {
+      case 0:
+        final_type = GeometryType::kNull;
+        break;
+      case 1:
+        final_type = *types.begin();
+        break;
+      case 2: {
+        if (types.count(GeometryType::kPoint) && types.count(GeometryType::kMultiPoint)) {
+          final_type = GeometryType::kMultiPoint;
+        } else if (types.count(GeometryType::kLineString) &&
+                   types.count(GeometryType::kMultiLineString)) {
+          final_type = GeometryType::kMultiLineString;
+        } else if (types.count(GeometryType::kPolygon) &&
+                   types.count(GeometryType::kMultiPolygon)) {
+          final_type = GeometryType::kMultiPolygon;
+        } else {
+          final_type = GeometryType::kGeometryCollection;
+        }
+        break;
+      }
+      default:
+        final_type = GeometryType::kGeometryCollection;
+    }
+    geometry_type_ = final_type;
+  }
 
   template <typename T>
   void appendVector(rmm::cuda_stream_view stream, rmm::device_uvector<T>& d_vec,
                     const std::vector<T>& h_vec) {
+    if (h_vec.empty()) return;
     auto prev_size = d_vec.size();
     d_vec.resize(prev_size + h_vec.size(), stream);
     detail::async_copy_h2d(stream, h_vec.data(), d_vec.data() + prev_size, h_vec.size());
@@ -530,6 +739,7 @@ class ParallelWkbLoader {
   template <typename T>
   void calcPrefixSum(rmm::cuda_stream_view stream, rmm::device_uvector<T>& nums,
                      rmm::device_uvector<T>& ps) {
+    if (nums.size() == 0) return;
     ps.resize(nums.size() + 1, stream);
     ps.set_element_to_zero_async(0, stream);
     thrust::inclusive_scan(rmm::exec_policy_nosync(stream), nums.begin(), nums.end(),

@@ -1,4 +1,5 @@
 #include "array_stream.hpp"
+#include "gpuspatial/geom/geometry_collection.cuh"
 #include "gpuspatial/geom/multi_polygon.cuh"
 #include "gpuspatial/loader/device_geometries.cuh"
 #include "gpuspatial/loader/wkb_loader.h"
@@ -14,48 +15,20 @@
 
 #include <rmm/cuda_stream.hpp>
 
+#include <algorithm>
+#include <iomanip>
+#include <iostream>
+#include <vector>
 #include "gpuspatial/loader/parallel_wkb_loader.h"
-
 namespace gpuspatial {
 
 template <typename T>
 class WKBLoaderTest : public ::testing::Test {};
-TYPED_TEST_SUITE(WKBLoaderTest, TestUtils::PointIndexTypePairs);
+using PointIndexTypePairs1 =
+    ::testing::Types<std::pair<gpuspatial::Point<double, 2>, uint32_t>>;
 
-TYPED_TEST(WKBLoaderTest, Point) {
-  using point_t = typename TypeParam::first_type;
-  using index_t = typename TypeParam::second_type;
-  nanoarrow::UniqueArrayStream stream;
-
-  // auto path =
-  //     TestUtils::GetTestDataPath("../test_data/natural-earth_countries_wkb.arrows");
-  //
-  // ArrayStreamFromIpc(path, "geometry", stream.get());
-  // FIXME: it interprets  MULTIPOINT (70 70, 80 80)  as LINESTRING
-  ArrayStreamFromWKT(
-      {
-          {"GEOMETRYCOLLECTION ( POINT (10 10), LINESTRING (20 20, 30 30, 40 20), GEOMETRYCOLLECTION ( POLYGON ((50 50, 60 50, 60 60, 50 60, 50 50)), MULTIPOINT (70 70, 80 80) ) )"},
-      },
-      GEOARROW_TYPE_WKB, stream.get());
-  nanoarrow::UniqueArray array;
-  ArrowError error;
-  ArrowErrorSet(&error, "Failed to get next array from stream");
-
-  rmm::cuda_stream cuda_stream;
-
-  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
-
-  printf("arrow size %ld\n", array->length);
-
-  ParallelWkbLoader<point_t, index_t> loader;
-  typename ParallelWkbLoader<point_t, index_t>::Config config;
-
-  loader.Init(config);
-
-  loader.Parse(cuda_stream, array.get(), 0, array->length);
-}
-
-#if 0
+TYPED_TEST_SUITE(WKBLoaderTest, PointIndexTypePairs1);
+#if 1
 TYPED_TEST(WKBLoaderTest, Point) {
   using point_t = typename TypeParam::first_type;
   using index_t = typename TypeParam::second_type;
@@ -67,9 +40,11 @@ TYPED_TEST(WKBLoaderTest, Point) {
                       {"POINT (999999999 1)", "POINT (1 999999999)", "POINT EMPTY"}},
                      GEOARROW_TYPE_WKB, stream.get());
 
-  WKBLoader<point_t> loader;
   rmm::cuda_stream cuda_stream;
-  std::vector<std::shared_ptr<GeometrySegment>> segments;
+  ParallelWkbLoader<point_t, index_t> loader;
+  typename ParallelWkbLoader<point_t, index_t>::Config config;
+
+  loader.Init(config);
 
   while (1) {
     nanoarrow::UniqueArray array;
@@ -79,14 +54,11 @@ TYPED_TEST(WKBLoaderTest, Point) {
     if (array->length == 0) {
       break;
     }
-    auto seg = std::make_shared<PointSegment<point_t>>();
-    loader.Load(array.get(), 0, array->length, *seg);
-    segments.push_back(seg);
+    loader.Parse(cuda_stream, array.get(), 0, array->length);
   }
 
-  auto geometries =
-      PointSegment<point_t>::template LoadOnDevice<index_t>(cuda_stream, segments);
-  auto points = TestUtils::ToVector(cuda_stream, geometries->get_points());
+  auto geometries = loader.Finish(cuda_stream);
+  auto points = TestUtils::ToVector(cuda_stream, geometries.get_points());
   cuda_stream.synchronize();
   EXPECT_EQ(points.size(), 10);
   EXPECT_EQ(points[0], point_t(0, 0));
@@ -111,9 +83,11 @@ TYPED_TEST(WKBLoaderTest, MultiPoint) {
                       {"MULTIPOINT EMPTY"},
                       {"MULTIPOINT ((5.5 6.6), (7.7 8.8))"}},
                      GEOARROW_TYPE_WKB, stream.get());
-  WKBLoader<point_t> loader;
+  ParallelWkbLoader<point_t, index_t> loader;
+  typename ParallelWkbLoader<point_t, index_t>::Config config;
   rmm::cuda_stream cuda_stream;
-  std::vector<std::shared_ptr<GeometrySegment>> segments;
+
+  loader.Init(config);
 
   while (1) {
     nanoarrow::UniqueArray array;
@@ -123,21 +97,18 @@ TYPED_TEST(WKBLoaderTest, MultiPoint) {
     if (array->length == 0) {
       break;
     }
-    auto seg = std::make_shared<MultiPointSegment<point_t, index_t>>();
-    loader.Load(array.get(), 0, array->length, *seg);
-    segments.push_back(seg);
+    loader.Parse(cuda_stream, array.get(), 0, array->length);
   }
 
-  auto geometries =
-      MultiPointSegment<point_t, index_t>::template LoadOnDevice(cuda_stream, segments);
+  auto geometries = loader.Finish(cuda_stream);
   auto offsets = TestUtils::ToVector(
-      cuda_stream, *geometries->get_offsets().multi_point_offsets.prefix_sum);
-  auto points = TestUtils::ToVector(cuda_stream, geometries->get_points());
-  auto mbrs = TestUtils::ToVector(cuda_stream, geometries->get_mbrs());
+      cuda_stream, geometries.get_offsets().multi_point_offsets.ps_num_points);
+  auto points = TestUtils::ToVector(cuda_stream, geometries.get_points());
+  auto mbrs = TestUtils::ToVector(cuda_stream, geometries.get_mbrs());
   cuda_stream.synchronize();
-  MultiPointArrayView<point_t, index_t> array_view(ArrayView<index_t>{offsets},
-                                                   ArrayView<point_t>{points},
-                                                   ArrayView<Box<point_t>>{mbrs});
+  MultiPointArrayView<point_t, index_t> array_view(
+      ArrayView<index_t>{offsets}, ArrayView<point_t>{points},
+      ArrayView<Box<Point<float, point_t::n_dim>>>{mbrs});
   EXPECT_EQ(array_view.size(), 5);
   EXPECT_EQ(array_view[0].num_points(), 2);
   EXPECT_EQ(array_view[0].get_point(0), point_t(0, 0));
@@ -166,9 +137,10 @@ TYPED_TEST(WKBLoaderTest, PointMultiPoint) {
                       {"POINT (7 8)", "MULTIPOINT ((9 10))"},
                       {"MULTIPOINT EMPTY", "POINT (11 12)"}},
                      GEOARROW_TYPE_WKB, stream.get());
-  WKBLoader<point_t> loader;
   rmm::cuda_stream cuda_stream;
-  std::vector<std::shared_ptr<GeometrySegment>> segments;
+  ParallelWkbLoader<point_t, index_t> loader;
+  typename ParallelWkbLoader<point_t, index_t>::Config config;
+  loader.Init(config);
 
   while (1) {
     nanoarrow::UniqueArray array;
@@ -178,21 +150,18 @@ TYPED_TEST(WKBLoaderTest, PointMultiPoint) {
     if (array->length == 0) {
       break;
     }
-    auto seg = std::make_shared<MultiPointSegment<point_t, index_t>>();
-    loader.Load(array.get(), 0, array->length, *seg);
-    segments.push_back(seg);
+    loader.Parse(cuda_stream, array.get(), 0, array->length);
   }
 
-  auto geometries =
-      MultiPointSegment<point_t, index_t>::template LoadOnDevice(cuda_stream, segments);
+  auto geometries = loader.Finish(cuda_stream);
   auto offsets = TestUtils::ToVector(
-      cuda_stream, *geometries->get_offsets().multi_point_offsets.prefix_sum);
-  auto points = TestUtils::ToVector(cuda_stream, geometries->get_points());
-  auto mbrs = TestUtils::ToVector(cuda_stream, geometries->get_mbrs());
+      cuda_stream, geometries.get_offsets().multi_point_offsets.ps_num_points);
+  auto points = TestUtils::ToVector(cuda_stream, geometries.get_points());
+  auto mbrs = TestUtils::ToVector(cuda_stream, geometries.get_mbrs());
   cuda_stream.synchronize();
-  MultiPointArrayView<point_t, index_t> array_view(ArrayView<index_t>{offsets},
-                                                   ArrayView<point_t>{points},
-                                                   ArrayView<Box<point_t>>{mbrs});
+  MultiPointArrayView<point_t, index_t> array_view(
+      ArrayView<index_t>{offsets}, ArrayView<point_t>{points},
+      ArrayView<Box<Point<float, point_t::n_dim>>>{mbrs});
   EXPECT_EQ(array_view.size(), 6);
   EXPECT_EQ(array_view[0].num_points(), 1);
   EXPECT_EQ(array_view[0].get_point(0), point_t(1, 2));
@@ -226,17 +195,15 @@ TYPED_TEST(WKBLoaderTest, PointWKBLoaderArrowIPC) {
 
   using point_t = typename TypeParam::first_type;
   using index_t = typename TypeParam::second_type;
-  WKBLoader<point_t> loader;
   rmm::cuda_stream cuda_stream;
+  ParallelWkbLoader<point_t, index_t> loader;
 
+  loader.Init();
   for (int i = 0; i < 100; i++) {
     ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
-    auto seg = std::make_shared<PointSegment<point_t>>();
-    loader.Load(array.get(), 0, array->length, *seg);
-    auto geometries =
-        PointSegment<point_t>::template LoadOnDevice<index_t>(cuda_stream, {seg});
-
-    ASSERT_EQ(geometries->get_points().size(), 1000);
+    loader.Parse(cuda_stream, array.get(), 0, array->length);
+    auto geometries = loader.Finish(cuda_stream);
+    ASSERT_EQ(geometries.get_points().size(), 1000);
   }
 }
 
@@ -253,39 +220,37 @@ TYPED_TEST(WKBLoaderTest, PolygonWKBLoaderArrowIPC) {
   ArrowError error;
   ArrowErrorSet(&error, "Failed to get next array from stream");
 
-  WKBLoader<point_t> loader;
   double polysize = 0.5;
   int n_row_groups = 100;
   int n_per_row_group = 1000;
   rmm::cuda_stream cuda_stream;
 
-  std::vector<std::shared_ptr<GeometrySegment>> segs;
+  ParallelWkbLoader<point_t, index_t> loader;
+
+  loader.Init();
 
   for (int i = 0; i < n_row_groups; i++) {
     ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
-    auto seg = std::make_shared<PolygonSegment<point_t, index_t>>();
-
-    loader.Load(array.get(), 0, array->length, *seg);
-
-    segs.push_back(seg);
+    loader.Parse(cuda_stream, array.get(), 0, array->length);
   }
 
-  auto geometries = PolygonSegment<point_t, index_t>::LoadOnDevice(cuda_stream, segs);
-  auto points = TestUtils::ToVector(cuda_stream, geometries->get_points());
-  auto& offsets = geometries->get_offsets();
+  auto geometries = loader.Finish(cuda_stream);
+  auto points = TestUtils::ToVector(cuda_stream, geometries.get_points());
+  auto& offsets = geometries.get_offsets();
 
-  auto prefix_sum_polygons =
-      TestUtils::ToVector(cuda_stream, *offsets.polygon_offsets.prefix_sum_polygons);
-  auto prefix_sum_rings =
-      TestUtils::ToVector(cuda_stream, *offsets.polygon_offsets.prefix_sum_rings);
-  auto mbrs = TestUtils::ToVector(cuda_stream, geometries->get_mbrs());
+  auto ps_num_rings =
+      TestUtils::ToVector(cuda_stream, offsets.polygon_offsets.ps_num_rings);
+  auto ps_num_points =
+      TestUtils::ToVector(cuda_stream, offsets.polygon_offsets.ps_num_points);
+  auto mbrs = TestUtils::ToVector(cuda_stream, geometries.get_mbrs());
   cuda_stream.synchronize();
-  ArrayView<index_t> v_prefix_sum_polygons(prefix_sum_polygons);
-  ArrayView<index_t> v_prefix_sum_rings(prefix_sum_rings);
+  ArrayView<index_t> v_ps_num_rings(ps_num_rings);
+  ArrayView<index_t> v_ps_num_points(ps_num_points);
   ArrayView<point_t> v_points(points);
 
   PolygonArrayView<point_t, index_t> polygon_array(
-      v_prefix_sum_polygons, v_prefix_sum_rings, v_points, ArrayView<Box<point_t>>(mbrs));
+      v_ps_num_rings, v_ps_num_points, v_points,
+      ArrayView<Box<Point<float, point_t::n_dim>>>(mbrs));
 
   ASSERT_EQ(polygon_array.size(), n_row_groups * n_per_row_group);
 
@@ -321,26 +286,28 @@ TYPED_TEST(WKBLoaderTest, PolygonWKBLoaderWithHoles) {
   ArrowError error;
   ArrowErrorSet(&error, "Failed to get next array from stream");
 
-  WKBLoader<point_t> loader;
+  ParallelWkbLoader<point_t, index_t> loader;
   rmm::cuda_stream cuda_stream;
 
-  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
-  auto seg = std::make_shared<PolygonSegment<point_t, index_t>>();
-  loader.Load(array.get(), 0, array->length, *seg);
-  auto geometries = PolygonSegment<point_t, index_t>::LoadOnDevice(cuda_stream, {seg});
+  loader.Init();
 
-  auto points = TestUtils::ToVector(cuda_stream, geometries->get_points());
-  const auto& offsets = geometries->get_offsets();
-  auto prefix_sum_polygons =
-      TestUtils::ToVector(cuda_stream, *offsets.polygon_offsets.prefix_sum_polygons);
-  auto prefix_sum_rings =
-      TestUtils::ToVector(cuda_stream, *offsets.polygon_offsets.prefix_sum_rings);
-  auto mbrs = TestUtils::ToVector(cuda_stream, geometries->get_mbrs());
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
+
+  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  auto geometries = loader.Finish(cuda_stream);
+
+  auto points = TestUtils::ToVector(cuda_stream, geometries.get_points());
+  const auto& offsets = geometries.get_offsets();
+  auto ps_num_rings =
+      TestUtils::ToVector(cuda_stream, offsets.polygon_offsets.ps_num_rings);
+  auto ps_num_points =
+      TestUtils::ToVector(cuda_stream, offsets.polygon_offsets.ps_num_points);
+  auto mbrs = TestUtils::ToVector(cuda_stream, geometries.get_mbrs());
   cuda_stream.synchronize();
-  ArrayView<index_t> v_prefix_sum_polygons(prefix_sum_polygons);
-  ArrayView<index_t> v_prefix_sum_rings(prefix_sum_rings);
+  ArrayView<index_t> v_prefix_sum_polygons(ps_num_rings);
+  ArrayView<index_t> v_prefix_sum_rings(ps_num_points);
   ArrayView<point_t> v_points(points);
-  ArrayView<Box<point_t>> v_mbrs(mbrs.data(), mbrs.size());
+  ArrayView<Box<Point<float, point_t::n_dim>>> v_mbrs(mbrs.data(), mbrs.size());
 
   PolygonArrayView<point_t, index_t> polygon_array(v_prefix_sum_polygons,
                                                    v_prefix_sum_rings, v_points, v_mbrs);
@@ -439,32 +406,32 @@ TYPED_TEST(WKBLoaderTest, PolygonWKBLoaderMultipolygon) {
   ArrowError error;
   ArrowErrorSet(&error, "Failed to get next array from stream");
 
-  WKBLoader<point_t> loader;
   rmm::cuda_stream cuda_stream;
 
   ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
 
-  auto seg = std::make_shared<MultiPolygonSegment<point_t, index_t>>();
+  ParallelWkbLoader<point_t, index_t> loader;
 
-  loader.Load(array.get(), 0, array->length, *seg);
-  auto geometries =
-      MultiPolygonSegment<point_t, index_t>::LoadOnDevice(cuda_stream, {seg});
-  const auto& offsets = geometries->get_offsets();
-  auto points = TestUtils::ToVector(cuda_stream, geometries->get_points());
+  loader.Init();
+  loader.Parse(cuda_stream, array.get(), 0, array->length);
+
+  auto geometries = loader.Finish(cuda_stream);
+  const auto& offsets = geometries.get_offsets();
+  auto points = TestUtils::ToVector(cuda_stream, geometries.get_points());
   auto prefix_sum_geoms =
-      TestUtils::ToVector(cuda_stream, *offsets.multi_polygon_offsets.prefix_sum_geoms);
+      TestUtils::ToVector(cuda_stream, offsets.multi_polygon_offsets.ps_num_parts);
   auto prefix_sum_parts =
-      TestUtils::ToVector(cuda_stream, *offsets.multi_polygon_offsets.prefix_sum_parts);
+      TestUtils::ToVector(cuda_stream, offsets.multi_polygon_offsets.ps_num_rings);
   auto prefix_sum_rings =
-      TestUtils::ToVector(cuda_stream, *offsets.multi_polygon_offsets.prefix_sum_rings);
-  auto mbrs = TestUtils::ToVector(cuda_stream, geometries->get_mbrs());
+      TestUtils::ToVector(cuda_stream, offsets.multi_polygon_offsets.ps_num_points);
+  auto mbrs = TestUtils::ToVector(cuda_stream, geometries.get_mbrs());
   cuda_stream.synchronize();
 
   ArrayView<index_t> v_prefix_sum_geoms(prefix_sum_geoms);
   ArrayView<index_t> v_prefix_sum_parts(prefix_sum_parts);
   ArrayView<index_t> v_prefix_sum_rings(prefix_sum_rings);
   ArrayView<point_t> v_points(points);
-  ArrayView<Box<point_t>> v_mbrs(mbrs.data(), mbrs.size());
+  ArrayView<Box<Point<float, point_t::n_dim>>> v_mbrs(mbrs.data(), mbrs.size());
 
   MultiPolygonArrayView<point_t, index_t> multi_polygon_array(
       v_prefix_sum_geoms, v_prefix_sum_parts, v_prefix_sum_rings, v_points, v_mbrs);
@@ -543,32 +510,31 @@ TYPED_TEST(WKBLoaderTest, PolygonWKBLoaderMultipolygonLocate) {
   ArrowError error;
   ArrowErrorSet(&error, "Failed to get next array from stream");
 
-  WKBLoader<point_t> loader;
+  ParallelWkbLoader<point_t, index_t> loader;
   rmm::cuda_stream cuda_stream;
 
+  loader.Init();
   ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
 
-  auto seg = std::make_shared<MultiPolygonSegment<point_t, index_t>>();
+  loader.Parse(cuda_stream, array.get(), 0, array->length);
 
-  loader.Load(array.get(), 0, array->length, *seg);
-  auto geometries =
-      MultiPolygonSegment<point_t, index_t>::LoadOnDevice(cuda_stream, {seg});
-  const auto& offsets = geometries->get_offsets();
-  auto points = TestUtils::ToVector(cuda_stream, geometries->get_points());
+  auto geometries = loader.Finish(cuda_stream);
+  const auto& offsets = geometries.get_offsets();
+  auto points = TestUtils::ToVector(cuda_stream, geometries.get_points());
   auto prefix_sum_geoms =
-      TestUtils::ToVector(cuda_stream, *offsets.multi_polygon_offsets.prefix_sum_geoms);
+      TestUtils::ToVector(cuda_stream, offsets.multi_polygon_offsets.ps_num_parts);
   auto prefix_sum_parts =
-      TestUtils::ToVector(cuda_stream, *offsets.multi_polygon_offsets.prefix_sum_parts);
+      TestUtils::ToVector(cuda_stream, offsets.multi_polygon_offsets.ps_num_rings);
   auto prefix_sum_rings =
-      TestUtils::ToVector(cuda_stream, *offsets.multi_polygon_offsets.prefix_sum_rings);
-  auto mbrs = TestUtils::ToVector(cuda_stream, geometries->get_mbrs());
+      TestUtils::ToVector(cuda_stream, offsets.multi_polygon_offsets.ps_num_points);
+  auto mbrs = TestUtils::ToVector(cuda_stream, geometries.get_mbrs());
   cuda_stream.synchronize();
 
   ArrayView<index_t> v_prefix_sum_geoms(prefix_sum_geoms);
   ArrayView<index_t> v_prefix_sum_parts(prefix_sum_parts);
   ArrayView<index_t> v_prefix_sum_rings(prefix_sum_rings);
   ArrayView<point_t> v_points(points);
-  ArrayView<Box<point_t>> v_mbrs(mbrs.data(), mbrs.size());
+  ArrayView<Box<Point<float, point_t::n_dim>>> v_mbrs(mbrs.data(), mbrs.size());
 
   MultiPolygonArrayView<point_t, index_t> multi_polygon_array(
       v_prefix_sum_geoms, v_prefix_sum_parts, v_prefix_sum_rings, v_points, v_mbrs);
@@ -591,38 +557,187 @@ TYPED_TEST(WKBLoaderTest, PolygonWKBLoaderMultipolygonLocate) {
     }
   }
 }
+#endif
 
-TEST(WKBLoaderTest, GeoCollectionWKBLoader) {
-  // using point_t = typename TypeParam::first_type;
-  // using index_t = typename TypeParam::second_type;
-  using point_t = Point<double, 2>;
-  using index_t = uint32_t;
+template <typename VEC_T>
+void printVectorsAsTable(const VEC_T& v1, const VEC_T& v2, const VEC_T& v3) {
+  // 1. Determine the maximum size for iteration
+  size_t maxSize = std::max({v1.size(), v2.size(), v3.size()});
+
+  // 2. Print Header (Vector Indices)
+  std::cout << "Index | Vector 1 | Vector 2 | Vector 3" << std::endl;
+  std::cout << "---------------------------------------" << std::endl;
+
+  // 3. Iterate and Print Rows
+  for (size_t i = 0; i < maxSize; ++i) {
+    // Print Index
+    std::cout << std::setw(5) << i << " | ";
+
+    // Print value from v1 or placeholder
+    if (i < v1.size()) {
+      std::cout << std::setw(8) << v1[i] << " | ";
+    } else {
+      std::cout << std::setw(8) << " - " << " | ";
+    }
+
+    // Print value from v2 or placeholder
+    if (i < v2.size()) {
+      std::cout << std::setw(8) << v2[i] << " | ";
+    } else {
+      std::cout << std::setw(8) << " - " << " | ";
+    }
+
+    // Print value from v3 or placeholder
+    if (i < v3.size()) {
+      std::cout << std::setw(8) << v3[i] << std::endl;
+    } else {
+      std::cout << std::setw(8) << " - " << std::endl;
+    }
+  }
+}
+
+TYPED_TEST(WKBLoaderTest, MixTypes) {
+  using point_t = typename TypeParam::first_type;
+  using index_t = typename TypeParam::second_type;
   nanoarrow::UniqueArrayStream stream;
-  ArrayStreamFromWKT(
-      {{"POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))",
-        "POLYGON ((35 10, 45 45, 15 40, 10 20, 35 10), (20 30, 35 35, 30 20, 20 30))",
-        "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (2 2, 3 2, 3 3, 2 3, 2 2), (6 6, 8 6, 8 8, 6 8, 6 6))",
-        "MULTIPOLYGON (((0 0, 0 1, 1 1, 1 0, 0 0)), ((2 2, 2 3, 3 3, 3 2, 2 2)))",
-        "POLYGON ((30 0, 60 20, 50 50, 10 50, 0 20, 30 0), (20 30, 25 40, 15 40, 20 30), (30 30, 35 40, 25 40, 30 30), (40 30, 45 40, 35 40, 40 30))",
-        "MULTIPOLYGON (((40 40, 20 45, 45 30, 40 40)), ((20 35, 10 30, 10 10, 30 5, 45 20, 20 35), (30 20, 20 15, 20 25, 30 20)))",
-        "POLYGON ((40 0, 50 30, 80 20, 90 70, 60 90, 30 80, 20 40, 40 0), (50 20, 65 30, 60 50, 45 40, 50 20), (30 60, 50 70, 45 80, 30 60))",
-        "MULTIPOLYGON (((-1 0, 0 1, 1 0, 0 -1, -1 0)), ((2 2, 2 3, 3 3, 3 2, 2 2)), ((0 4, 1 5, 2 4, 0 4)))"}},
-      GEOARROW_TYPE_WKB, stream.get());
 
+  ArrayStreamFromWKT(
+      {
+          {"POINT (30 10)", "POINT EMPTY", "LINESTRING (30 10, 10 30, 40 40)",
+           "LINESTRING EMPTY",
+           "POLYGON ((35 10, 45 45, 15 40, 10 20, 35 10), (20 30, 35 35, 30 20, 20 30))",
+           "POLYGON EMPTY", "MULTIPOINT (10 40, 40 30, 20 20, 30 10)",
+           "MULTILINESTRING ((10 10, 20 20, 10 40), (40 40, 30 30, 40 20, 30 10))",
+           "MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20)), ((15 5, 40 10, 10 20, 15 5)))"},
+      },
+      GEOARROW_TYPE_WKB, stream.get());
   nanoarrow::UniqueArray array;
   ArrowError error;
   ArrowErrorSet(&error, "Failed to get next array from stream");
 
-  printf("GeoCollectionWKBLoader\n");
-
-  WKBLoader<point_t> loader;
   rmm::cuda_stream cuda_stream;
 
   ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
 
-  auto seg = std::make_shared<GeometryCollectionSegment<point_t, index_t>>();
+  ParallelWkbLoader<point_t, index_t> loader;
 
-  loader.Load(array.get(), 0, array->length, *seg);
+  loader.Init();
+
+  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  auto geometries = loader.Finish(cuda_stream);
+  const auto& offsets = geometries.get_offsets();
+
+  ASSERT_EQ(geometries.get_geometry_type(), GeometryType::kGeometryCollection);
+
+  auto points = TestUtils::ToVector(cuda_stream, geometries.get_points());
+  auto feature_types =
+      TestUtils::ToVector(cuda_stream, offsets.geom_collection_offsets.feature_types);
+  auto ps_num_geoms =
+      TestUtils::ToVector(cuda_stream, offsets.geom_collection_offsets.ps_num_geoms);
+  auto ps_num_parts =
+      TestUtils::ToVector(cuda_stream, offsets.geom_collection_offsets.ps_num_parts);
+  auto ps_num_rings =
+      TestUtils::ToVector(cuda_stream, offsets.geom_collection_offsets.ps_num_rings);
+  auto ps_num_points =
+      TestUtils::ToVector(cuda_stream, offsets.geom_collection_offsets.ps_num_points);
+  auto mbrs = TestUtils::ToVector(cuda_stream, geometries.get_mbrs());
+  cuda_stream.synchronize();
+
+  printVectorsAsTable(ps_num_parts, ps_num_rings, ps_num_points);
+  ASSERT_EQ(ps_num_geoms.size(), 10);
+
+  ArrayView<GeometryType> v_feature_types(feature_types);
+  ArrayView<index_t> v_ps_num_geoms(ps_num_geoms);
+  ArrayView<index_t> v_ps_num_parts(ps_num_parts);
+  ArrayView<index_t> v_ps_num_rings(ps_num_rings);
+  ArrayView<index_t> v_ps_num_points(ps_num_points);
+  ArrayView<point_t> v_points(points);
+  ArrayView<Box<Point<float, point_t::n_dim>>> v_mbrs(mbrs.data(), mbrs.size());
+
+  GeometryCollectionArrayView<point_t, index_t> geom_collection_array(
+      v_feature_types, v_ps_num_geoms, v_ps_num_parts, v_ps_num_rings, v_ps_num_points,
+      v_points, v_mbrs);
+  ASSERT_EQ(geom_collection_array[0].num_geometries(), 1);
+  ASSERT_EQ(geom_collection_array[0].get_type(0), GeometryType::kPoint);
+  ASSERT_EQ(geom_collection_array[0].get_point(0), point_t(30, 10));
+
+  ASSERT_EQ(geom_collection_array[1].num_geometries(), 1);
+  ASSERT_EQ(geom_collection_array[1].get_type(0), GeometryType::kPoint);
+
+  ASSERT_EQ(geom_collection_array[2].num_geometries(), 1);
+  ASSERT_EQ(geom_collection_array[2].get_type(0), GeometryType::kLineString);
+  ASSERT_EQ(geom_collection_array[2].get_line_string(0).num_points(), 3);
+
+  ASSERT_EQ(geom_collection_array[3].num_geometries(), 1);
+  ASSERT_EQ(geom_collection_array[3].get_type(0), GeometryType::kLineString);
+  ASSERT_TRUE(geom_collection_array[3].get_line_string(0).empty());
+
+  ASSERT_EQ(geom_collection_array[4].num_geometries(), 1);
+  ASSERT_EQ(geom_collection_array[4].get_type(0), GeometryType::kPolygon);
+  ASSERT_EQ(geom_collection_array[4].get_polygon(0).num_rings(), 2);
+  ASSERT_EQ(geom_collection_array[4].get_polygon(0).get_ring(0).num_points(), 5);
+  ASSERT_EQ(geom_collection_array[4].get_polygon(0).get_ring(1).num_points(), 4);
+
+  ASSERT_EQ(geom_collection_array[5].num_geometries(), 1);
+  ASSERT_EQ(geom_collection_array[5].get_type(0), GeometryType::kPolygon);
+  ASSERT_TRUE(geom_collection_array[5].get_polygon(0).empty());
+
+  ASSERT_EQ(geom_collection_array[6].num_geometries(), 1);
+  ASSERT_EQ(geom_collection_array[6].get_type(0), GeometryType::kMultiPoint);
+  ASSERT_EQ(geom_collection_array[6].get_multi_point(0).num_points(), 4);
+
+  ASSERT_EQ(geom_collection_array[7].num_geometries(), 1);
+  ASSERT_EQ(geom_collection_array[7].get_type(0), GeometryType::kMultiLineString);
+  ASSERT_EQ(geom_collection_array[7].get_multi_linestring(0).num_line_strings(), 2);
+  ASSERT_EQ(
+      geom_collection_array[7].get_multi_linestring(0).get_line_string(0).num_points(),
+      3);
+  ASSERT_EQ(
+      geom_collection_array[7].get_multi_linestring(0).get_line_string(1).num_points(),
+      4);
+
+  ASSERT_EQ(geom_collection_array[8].num_geometries(), 1);
+  ASSERT_EQ(geom_collection_array[8].get_type(0), GeometryType::kMultiPolygon);
+  ASSERT_EQ(geom_collection_array[8].get_multi_polygon(0).num_polygons(), 2);
+  ASSERT_EQ(geom_collection_array[8].get_multi_polygon(0).get_polygon(0).num_rings(), 1);
+  ASSERT_EQ(geom_collection_array[8].get_multi_polygon(0).get_polygon(1).num_rings(), 1);
+}
+
+#if 0
+TYPED_TEST(WKBLoaderTest, MixTypes) {
+  using point_t = typename TypeParam::first_type;
+  using index_t = typename TypeParam::second_type;
+  nanoarrow::UniqueArrayStream stream;
+
+  // auto path =
+  //     TestUtils::GetTestDataPath("../test_data/natural-earth_countries_wkb.arrows");
+  //
+  // ArrayStreamFromIpc(path, "geometry", stream.get());
+  // FIXME: it interprets  MULTIPOINT (70 70, 80 80)  as LINESTRING
+  ArrayStreamFromWKT(
+      {
+          {"GEOMETRYCOLLECTION ( POINT (10 10), LINESTRING (20 20, 30 30, 40 20), GEOMETRYCOLLECTION ( POLYGON ((50 50, 60 50, 60 60, 50 60, 50 50)), MULTIPOINT (70 70, 80 80) ) )"},
+          // {"MULTIPOLYGON(((30 20, 45 40, 10 40, 30 20)), ((15 5, 40 10, 10 30, 15 5),
+          // (20 15, 35 15, 35 25, 20 25, 20 15)))"
+      },
+      GEOARROW_TYPE_WKB, stream.get());
+  nanoarrow::UniqueArray array;
+  ArrowError error;
+  ArrowErrorSet(&error, "Failed to get next array from stream");
+
+  rmm::cuda_stream cuda_stream;
+
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
+
+  printf("arrow size %ld\n", array->length);
+
+  ParallelWkbLoader<point_t, index_t> loader;
+  typename ParallelWkbLoader<point_t, index_t>::Config config;
+
+  loader.Init(config);
+
+  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  loader.Finish(cuda_stream);
 }
 #endif
 

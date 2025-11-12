@@ -1,113 +1,221 @@
-#ifndef GPUSPATIAL_GEOM_GEOMETRY_COLLECTION_CUH
-#define GPUSPATIAL_GEOM_GEOMETRY_COLLECTION_CUH
+#pragma once
 #include "gpuspatial/geom/box.cuh"
 #include "gpuspatial/geom/geometry_type.cuh"
+#include "gpuspatial/geom/line_string.cuh"
+#include "gpuspatial/geom/multi_line_string.cuh"
+#include "gpuspatial/geom/multi_point.cuh"
+#include "gpuspatial/geom/multi_polygon.cuh"
+#include "gpuspatial/geom/point.cuh"
+#include "gpuspatial/geom/polygon.cuh"
 #include "gpuspatial/utils/array_view.h"
 
 namespace gpuspatial {
-
-namespace detail {
-/**
- * @struct Feature
- * @brief Defines a top-level feature, which can be a simple shape,
- * a multi-part geometry, or a collection. It groups GeometryParts
- * and describes the original hierarchy.
- */
-template <typename INDEX_T>
-struct Feature {
-  GeometryType type;
-  // The starting index in the Geometry Parts Buffer.
-  INDEX_T part_offset;
-
-  // The number of consecutive parts that make up this feature.
-  // For a simple Point, part_count is 1.
-  // For a MultiPolygon of 5 polygons, part_count is 5.
-  INDEX_T part_count;
-
-  // The index of the parent Feature in this same buffer.
-  // A value of -1 indicates a root feature with no parent.
-  // This field allows us to represent nested GeometryCollections.
-  int parent_id;
-
-  Feature() = default;
-
-  Feature(GeometryType a_type, INDEX_T a_part_offset, INDEX_T a_part_count)
-      : type(a_type),
-        part_offset(a_part_offset),
-        part_count(a_part_count),
-        parent_id(-1) {}
-
-  Feature(GeometryType a_type, INDEX_T a_part_offset, INDEX_T a_part_count,
-          int a_parent_id)
-      : type(a_type),
-        part_offset(a_part_offset),
-        part_count(a_part_count),
-        parent_id(a_parent_id) {}
-};
-
-/**
- * @struct GeometryPart
- * @brief Defines a single, atomic geometric part (Point, LineString, or Polygon).
- * This is the fundamental building block for all renderable shapes.
- */
-template <typename INDEX_T>
-struct GeometryPart {
-  // The type of this atomic part.
-  GeometryType type;
-
-  // The starting index in the main Vertex Buffer for this part's vertices.
-  INDEX_T vertex_offset;
-
-  // The total number of vertices this part uses from the Vertex Buffer.
-  INDEX_T vertex_count;
-
-  // For Polygons: The starting index in the Ring Starts Buffer.
-  // For other types, this can be -1 or 0.
-  INDEX_T ring_starts_offset;
-
-  // For Polygons: The number of rings (1 outer + N holes).
-  // For LineStrings and Points, this will be 0.
-  INDEX_T ring_count;
-
-  // Default constructor
-  GeometryPart() = default;
-
-  // Constructor with three parameters
-  GeometryPart(GeometryType a_type, INDEX_T a_vertex_offset, INDEX_T a_vertex_count)
-      : type(a_type),
-        vertex_offset(a_vertex_offset),
-        vertex_count(a_vertex_count),
-        ring_starts_offset(0),
-        ring_count(0) {}
-
-  // Constructor with all parameters
-  GeometryPart(GeometryType a_type, INDEX_T a_vertex_offset, INDEX_T a_vertex_count,
-               INDEX_T a_ring_starts_offset, INDEX_T a_ring_count)
-      : type(a_type),
-        vertex_offset(a_vertex_offset),
-        vertex_count(a_vertex_count),
-        ring_starts_offset(a_ring_starts_offset),
-        ring_count(a_ring_count) {}
-};
-
-}  // namespace detail
 
 template <typename POINT_T, typename INDEX_T>
 class GeometryCollection {
  public:
   using point_t = POINT_T;
-  using index_t = INDEX_T;
-  using box_t = Box<POINT_T>;
-  using scalar_t = typename point_t::scalar_t;
-  static constexpr GeometryType geometry_type = GeometryType::kGeometryCollection;
+  using line_segments_view_t = LineString<point_t>;
+  using box_t = Box<Point<float, point_t::n_dim>>;
+
+  GeometryCollection() = default;
+
+  DEV_HOST GeometryCollection(const ArrayView<GeometryType>& feature_types,
+                              const ArrayView<INDEX_T>& ps_num_parts,
+                              const ArrayView<INDEX_T>& ps_num_rings,
+                              const ArrayView<INDEX_T>& ps_num_points,
+                              const ArrayView<point_t>& vertices, const box_t& mbr)
+      : feature_types_(feature_types),
+        ps_num_parts_(ps_num_parts),
+        ps_num_rings_(ps_num_rings),
+        ps_num_points_(ps_num_points),
+        vertices_(vertices),
+        mbr_(mbr) {}
+
+  // DEV_HOST_INLINE bool empty() const {
+  //   for (size_t i = 0; i < num_polygons(); i++) {
+  //     if (!get_polygon(i).empty()) {
+  //       return false;
+  //     }
+  //   }
+  //   return true;
+  // }
+
+  DEV_HOST_INLINE INDEX_T num_geometries() const { return feature_types_.size(); }
+
+  DEV_HOST_INLINE GeometryType get_type(INDEX_T geometry_idx) const {
+    return feature_types_[geometry_idx];
+  }
+
+  DEV_HOST_INLINE POINT_T get_point(INDEX_T geometry_idx) const {
+    assert(feature_types_[geometry_idx] == GeometryType::kPoint);
+    auto part_begin = ps_num_parts_[geometry_idx];
+    auto ring_begin = ps_num_rings_[part_begin];
+    auto point_begin = ps_num_points_[ring_begin];
+    return vertices_[point_begin];
+  }
+
+  DEV_HOST_INLINE LineString<POINT_T> get_line_string(INDEX_T geometry_idx) const {
+    assert(feature_types_[geometry_idx] == GeometryType::kLineString);
+    auto part_begin = ps_num_parts_[geometry_idx];
+    auto ring_begin = ps_num_rings_[part_begin];
+    auto point_begin = ps_num_points_[ring_begin];
+    auto point_end = ps_num_points_[ring_begin + 1];
+    ArrayView<point_t> vertices(const_cast<POINT_T*>(vertices_.data()) + point_begin,
+                                point_end - point_begin);
+
+    return {vertices, mbr_};
+  }
+
+  DEV_HOST_INLINE Polygon<POINT_T, INDEX_T> get_polygon(INDEX_T geometry_idx) const {
+    assert(feature_types_[geometry_idx] == GeometryType::kPolygon);
+    auto part_begin = ps_num_parts_[geometry_idx];
+    auto part_end = ps_num_parts_[geometry_idx + 1];
+    if (part_begin == part_end) return {};
+    auto ring_begin = ps_num_rings_[part_begin];
+    auto ring_end = ps_num_rings_[part_begin + 1];
+    ArrayView<INDEX_T> ps_num_points(
+        const_cast<INDEX_T*>(ps_num_points_.data()) + ring_begin,
+        ring_end - ring_begin + 1);
+    return {ps_num_points, vertices_, mbr_};
+  }
+
+  DEV_HOST_INLINE MultiPoint<POINT_T> get_multi_point(INDEX_T geometry_idx) const {
+    assert(feature_types_[geometry_idx] == GeometryType::kMultiPoint);
+    auto part_begin = ps_num_parts_[geometry_idx];
+    auto part_end = ps_num_parts_[geometry_idx + 1];
+    if (part_begin == part_end) return {};
+    auto ring_begin = ps_num_rings_[part_begin];
+    auto point_begin = ps_num_points_[ring_begin];
+    auto point_end = ps_num_points_[ring_begin + 1];
+    ArrayView<POINT_T> vertices(const_cast<POINT_T*>(vertices_.data()) + point_begin,
+                                point_end - point_begin);
+    return {vertices, mbr_};
+  }
+
+  DEV_HOST_INLINE MultiLineString<POINT_T, INDEX_T> get_multi_linestring(
+      INDEX_T geometry_idx) const {
+    assert(feature_types_[geometry_idx] == GeometryType::kMultiLineString);
+    auto part_begin = ps_num_parts_[geometry_idx];
+    auto part_end = ps_num_parts_[geometry_idx + 1];
+    if (part_begin == part_end) return {};
+    auto ring_begin = ps_num_rings_[part_begin];
+    auto ring_end = ps_num_rings_[part_begin + 1];
+    ArrayView<INDEX_T> ps_num_points(
+        const_cast<INDEX_T*>(ps_num_points_.data()) + ring_begin,
+        ring_end - ring_begin + 1);
+
+    return {ps_num_points, vertices_, mbr_};
+  }
+
+  DEV_HOST_INLINE MultiPolygon<POINT_T, INDEX_T> get_multi_polygon(
+      INDEX_T geometry_idx) const {
+    assert(feature_types_[geometry_idx] == GeometryType::kMultiPolygon);
+    auto part_begin = ps_num_parts_[geometry_idx];
+    auto part_end = ps_num_parts_[geometry_idx + 1];
+    ArrayView<INDEX_T> ps_num_rings(
+        const_cast<INDEX_T*>(ps_num_rings_.data()) + part_begin,
+        part_end - part_begin + 1);
+    return {ps_num_rings, ps_num_points_, vertices_, mbr_};
+  }
+
+  DEV_HOST_INLINE const box_t& get_mbr() const { return mbr_; }
 
  private:
-  ArrayView<detail::Feature<index_t>> features_;
-  ArrayView<detail::GeometryPart<index_t>> parts_;
-  ArrayView<index_t> ring_starts_;
-  ArrayView<point_t> vertices_;
+  ArrayView<GeometryType> feature_types_;
+  ArrayView<INDEX_T> ps_num_parts_;
+  ArrayView<INDEX_T> ps_num_rings_;
+  ArrayView<INDEX_T> ps_num_points_;
+  ArrayView<POINT_T> vertices_;
+  box_t mbr_;
+};
+
+/**
+ * This class can represent an array of polygons or multi-polygons
+ * @tparam POINT_T
+ */
+template <typename POINT_T, typename INDEX_T>
+class GeometryCollectionArrayView {
+ public:
+  using point_t = POINT_T;
+  using box_t = Box<Point<float, point_t::n_dim>>;
+  using geometry_t = MultiPolygon<point_t, INDEX_T>;
+  GeometryCollectionArrayView() = default;
+
+  DEV_HOST GeometryCollectionArrayView(const ArrayView<GeometryType>& feature_types,
+                                       const ArrayView<INDEX_T>& ps_num_geoms,
+                                       const ArrayView<INDEX_T>& ps_num_parts,
+                                       const ArrayView<INDEX_T>& ps_num_rings,
+                                       const ArrayView<INDEX_T>& ps_num_points,
+                                       const ArrayView<point_t>& vertices,
+                                       const ArrayView<box_t>& mbrs)
+      : feature_types_(feature_types),
+        ps_num_geoms_(ps_num_geoms),
+        ps_num_parts_(ps_num_parts),
+        ps_num_rings_(ps_num_rings),
+        ps_num_points_(ps_num_points),
+        vertices_(vertices),
+        mbrs_(mbrs) {}
+
+  DEV_HOST_INLINE size_t size() const {
+    return ps_num_geoms_.empty() ? 0 : ps_num_geoms_.size() - 1;
+  }
+
+  DEV_HOST_INLINE GeometryCollection<point_t, INDEX_T> operator[](size_t i) {
+    auto geom_begin = ps_num_geoms_[i];
+    auto geom_end = ps_num_geoms_[i + 1];
+
+    ArrayView<GeometryType> feature_types(feature_types_.data() + geom_begin,
+                                          geom_end - geom_begin);
+    ArrayView<INDEX_T> ps_num_parts(ps_num_parts_.data() + geom_begin,
+                                    geom_end - geom_begin + 1);
+
+    return {feature_types,  ps_num_parts, ps_num_rings_,
+            ps_num_points_, vertices_,    mbrs_[i]};
+  }
+
+  DEV_HOST_INLINE GeometryCollection<point_t, INDEX_T> operator[](size_t i) const {
+    auto geom_begin = ps_num_geoms_[i];
+    auto geom_end = ps_num_geoms_[i + 1];
+
+    ArrayView<GeometryType> feature_types(
+        const_cast<GeometryType*>(feature_types_.data()) + geom_begin,
+        geom_end - geom_begin);
+    ArrayView<INDEX_T> ps_num_parts(
+        const_cast<INDEX_T*>(ps_num_parts_.data()) + geom_begin,
+        geom_end - geom_begin + 1);
+
+    return {feature_types,  ps_num_parts, ps_num_rings_,
+            ps_num_points_, vertices_,    mbrs_[i]};
+  }
+
+  DEV_HOST_INLINE ArrayView<INDEX_T> get_prefix_sum_num_geoms() const {
+    return ps_num_geoms_;
+  }
+
+  DEV_HOST_INLINE ArrayView<INDEX_T> get_prefix_sum_num_parts() const {
+    return ps_num_parts_;
+  }
+
+  DEV_HOST_INLINE ArrayView<INDEX_T> get_prefix_sum_num_rings() const {
+    return ps_num_rings_;
+  }
+
+  DEV_HOST_INLINE ArrayView<INDEX_T> get_prefix_sum_num_points() const {
+    return ps_num_points_;
+  }
+  DEV_HOST_INLINE ArrayView<point_t> get_vertices() const { return vertices_; }
+
+  DEV_HOST_INLINE ArrayView<box_t> get_mbrs() const { return mbrs_; }
+
+ private:
+  ArrayView<GeometryType> feature_types_;
+  ArrayView<INDEX_T> ps_num_geoms_;
+  ArrayView<INDEX_T> ps_num_parts_;
+  ArrayView<INDEX_T> ps_num_rings_;
+  ArrayView<INDEX_T> ps_num_points_;
+  ArrayView<POINT_T> vertices_;
   ArrayView<box_t> mbrs_;
 };
 
 }  // namespace gpuspatial
-#endif  // GPUSPATIAL_GEOM_GEOMETRY_COLLECTION_CUH

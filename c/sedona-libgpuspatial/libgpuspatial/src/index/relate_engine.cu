@@ -1,7 +1,6 @@
 #include "gpuspatial/index/detail/launch_parameters.h"
 #include "gpuspatial/index/geometry_grouper.hpp"
 #include "gpuspatial/index/relate_engine.cuh"
-#include "gpuspatial/loader/device_geometries.cuh"
 #include "gpuspatial/relate/predicate.cuh"
 #include "gpuspatial/relate/relate.cuh"
 #include "gpuspatial/utils/array_view.h"
