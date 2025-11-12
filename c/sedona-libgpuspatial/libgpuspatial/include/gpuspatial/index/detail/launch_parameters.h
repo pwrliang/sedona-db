@@ -1,5 +1,5 @@
-#ifndef GPUSPATIAL_INDEX_SHADERS_LAUNCH_PARAMETERS_H
-#define GPUSPATIAL_INDEX_SHADERS_LAUNCH_PARAMETERS_H
+#pragma once
+
 #include <thrust/pair.h>
 #include "gpuspatial/geom/box.cuh"
 #include "gpuspatial/geom/multi_polygon.cuh"
@@ -14,13 +14,12 @@ namespace detail {
 
 template <typename POINT_T>
 struct LaunchParamsPointQuery {
-  using box_t = Box<POINT_T>;
-  // Input
+  using box_t = Box<Point<float, POINT_T::n_dim>>;
   // Data structures of geometries1
-  ArrayView<OptixAabb> aabbs1;  // MBRs of grouped geometries1
-  ArrayView<uint32_t> prefix_sum;
-  ArrayView<uint32_t> reordered_indices;
-  ArrayView<box_t> mbrs1;
+  bool grouped;
+  ArrayView<uint32_t> prefix_sum; // Only used when grouped
+  ArrayView<uint32_t> reordered_indices;  // Only used when grouped
+  ArrayView<box_t> mbrs1; // MBR of each feature in geometries1
   OptixTraversableHandle handle;
   //  Data structures of geometries2
   ArrayView<POINT_T> points2;
@@ -30,15 +29,9 @@ struct LaunchParamsPointQuery {
 
 template <typename POINT_T>
 struct LaunchParamsBoxQuery {
-  using box_t = Box<POINT_T>;
-
+  using box_t = Box<Point<float, POINT_T::n_dim>>;
   // Input
-  // Data structures of geometries1
-  ArrayView<OptixAabb> aabbs1;
-  ArrayView<uint32_t> prefix_sum;
-  ArrayView<uint32_t> reordered_indices;
   ArrayView<box_t> mbrs1;
-  //  Data structures of geometries2
   ArrayView<box_t> mbrs2;
   // can be either geometries 1 or 2
   OptixTraversableHandle handle;
@@ -80,4 +73,3 @@ struct LaunchParamsMultiPolygonPointQuery {
 }  // namespace detail
 
 }  // namespace gpuspatial
-#endif  // GPUSPATIAL_INDEX_SHADERS_LAUNCH_PARAMETERS_H

@@ -265,7 +265,7 @@ class GeometryGrouper {
     return {};
   }
 
-  void clear() {
+  void Clear() {
     aabbs_ = nullptr;
     prefix_sum_ = nullptr;
     reordered_indices_ = nullptr;

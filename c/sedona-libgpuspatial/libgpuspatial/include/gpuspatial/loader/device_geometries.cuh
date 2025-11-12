@@ -125,10 +125,10 @@ struct DeviceGeometries {
   };
 
   struct Offsets {
-    MultiPointOffsets multi_point_offsets;
     LineStringOffsets line_string_offsets;
-    MultiLineStringOffsets multi_line_string_offsets;
     PolygonOffsets polygon_offsets;
+    MultiPointOffsets multi_point_offsets;
+    MultiLineStringOffsets multi_line_string_offsets;
     MultiPolygonOffsets multi_polygon_offsets;
     GeometryCollectionOffsets geom_collection_offsets;
   };
@@ -149,6 +149,26 @@ struct DeviceGeometries {
     return mbrs_.size() == 0 ? points_.size() : mbrs_.size();
   }
 
+  void Clear(rmm::cuda_stream_view stream) {
+    type_ = GeometryType::kNumGeometryTypes;
+    free(stream, points_);
+    free(stream, mbrs_);
+    free(stream, offsets_.line_string_offsets.ps_num_points);
+    free(stream, offsets_.polygon_offsets.ps_num_rings);
+    free(stream, offsets_.polygon_offsets.ps_num_points);
+    free(stream, offsets_.multi_point_offsets.ps_num_points);
+    free(stream, offsets_.multi_line_string_offsets.ps_num_parts);
+    free(stream, offsets_.multi_line_string_offsets.ps_num_points);
+    free(stream, offsets_.multi_polygon_offsets.ps_num_parts);
+    free(stream, offsets_.multi_polygon_offsets.ps_num_rings);
+    free(stream, offsets_.multi_polygon_offsets.ps_num_points);
+    free(stream, offsets_.geom_collection_offsets.feature_types);
+    free(stream, offsets_.geom_collection_offsets.ps_num_geoms);
+    free(stream, offsets_.geom_collection_offsets.ps_num_parts);
+    free(stream, offsets_.geom_collection_offsets.ps_num_rings);
+    free(stream, offsets_.geom_collection_offsets.ps_num_points);
+  }
+
  private:
   friend class PointSegment<POINT_T>;
   friend class MultiPointSegment<POINT_T, INDEX_T>;
@@ -166,6 +186,12 @@ struct DeviceGeometries {
   // This should be empty if type_ is Point
   // Otherwise, each feature should have a corresponding MBR
   rmm::device_uvector<box_t> mbrs_{0, rmm::cuda_stream_default};
+
+  template <typename T>
+  void free(rmm::cuda_stream_view stream, rmm::device_uvector<T>& vec) {
+    vec.resize(0, stream);
+    vec.shrink_to_fit(stream);
+  }
 };
 
 }  // namespace gpuspatial

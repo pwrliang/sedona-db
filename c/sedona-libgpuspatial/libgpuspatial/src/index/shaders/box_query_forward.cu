@@ -16,10 +16,11 @@ extern "C" __global__ void __intersection__gpuspatial() {
   using point_t = gpuspatial::ShaderPointType;
   constexpr int n_dim = point_t::n_dim;
   using ray_params_t = gpuspatial::detail::RayParams<n_dim>;
-  auto aabb1_id = optixGetPrimitiveIndex();
+  auto geom1_id = optixGetPrimitiveIndex();
   uint64_t geom2_id = optixGetPayload_0();
-  const auto& aabb1 = params.aabbs1[aabb1_id];
+  const auto& mbr1 = params.mbrs1[geom1_id];
   const auto& mbr2 = params.mbrs2[geom2_id];
+  const auto& aabb1 = mbr1.ToOptixAabb();
   const auto aabb2 = mbr2.ToOptixAabb();
 
   ray_params_t ray_params(aabb2, true);
@@ -27,16 +28,8 @@ extern "C" __global__ void __intersection__gpuspatial() {
   if (ray_params.IsHit(aabb1)) {  // ray cast from AABB2 hits AABB1
     ray_params = ray_params_t(aabb1, false);
     if (!ray_params.IsHit(aabb2)) {  // ray cast from AABB1 does not hit AABB2
-      auto begin = params.prefix_sum[aabb1_id];
-      auto end = params.prefix_sum[aabb1_id + 1];
-
-      for (auto offset = begin; offset < end; offset++) {
-        auto geom1_id = params.reordered_indices[offset];
-        const auto& mbr1 = params.mbrs1[geom1_id];
-
-        if (mbr1.intersects(mbr2)) {
-          params.ids.Append(thrust::make_pair(geom1_id, geom2_id));
-        }
+      if (mbr1.intersects(mbr2)) {
+        params.ids.Append(thrust::make_pair(geom1_id, geom2_id));
       }
     }
   }

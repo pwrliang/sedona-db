@@ -15,10 +15,10 @@ extern "C" __global__ void __intersection__gpuspatial() {
   auto aabb_id = optixGetPrimitiveIndex();
   auto geom2_id = optixGetPayload_0();
   const auto& point = params.points2[geom2_id];
-  const auto& aabb = params.aabbs1[aabb_id];
   const auto& mbrs1 = params.mbrs1;
 
-  if (point.covered_by(aabb)) {
+  if (params.grouped) {
+    assert(!params.prefix_sum.empty());
     auto begin = params.prefix_sum[aabb_id];
     auto end = params.prefix_sum[aabb_id + 1];
 
@@ -29,10 +29,16 @@ extern "C" __global__ void __intersection__gpuspatial() {
       } else {
         const auto& mbr1 = mbrs1[geom1_id];
 
-        if (mbr1.covers(point)) {
+        if (mbr1.covers(point.as_float())) {
           params.ids.Append(thrust::make_pair(geom1_id, geom2_id));
         }
       }
+    }
+  } else {
+    assert(!mbrs1.empty());
+    const auto& mbr1 = mbrs1[aabb_id];
+    if (mbr1.covers(point.as_float())) {
+      params.ids.Append(thrust::make_pair(aabb_id, geom2_id));
     }
   }
 }

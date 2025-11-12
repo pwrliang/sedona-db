@@ -434,7 +434,7 @@ class ParallelWkbLoader {
     // Whether to allow temporary memory spilling to host memory during parsing
     // Enabling this allows to process larger datasets with limited GPU memory but will
     // reduce parsing performance
-    bool temporary_memory_spilling = false;
+    bool spilling_temp_data = false;
   };
 
   void Init(const Config& config = Config()) {
@@ -442,7 +442,7 @@ class ParallelWkbLoader {
     config_ = config;
     auto managed_mr = std::make_shared<rmm::mr::managed_memory_resource>();
     auto default_mr = rmm::mr::get_current_device_resource_ref();
-    auto mr = config_.temporary_memory_spilling ? *managed_mr : default_mr;
+    auto mr = config_.spilling_temp_data ? *managed_mr : default_mr;
 
     geoms_.Init(mr);
     geometry_type_ = GeometryType::kNull;

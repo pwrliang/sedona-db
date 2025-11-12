@@ -17,22 +17,17 @@ extern "C" __global__ void __intersection__gpuspatial() {
   using point_t = gpuspatial::ShaderPointType;
   constexpr int n_dim = point_t::n_dim;
   using ray_params_t = gpuspatial::detail::RayParams<n_dim>;
-  auto aabb1_id = optixGetPayload_0();
+  auto geom1_id = optixGetPayload_0();
   auto geom2_id = optixGetPrimitiveIndex();
-  const auto& aabb1 = params.aabbs1[aabb1_id];
+  const auto& mbr1 = params.mbrs1[geom1_id];
   const auto& mbr2 = params.mbrs2[geom2_id];
+  const auto& aabb1 = mbr1.ToOptixAabb();
   const auto aabb2 = mbr2.ToOptixAabb();
   ray_params_t ray_params(aabb1, false);
 
   if (ray_params.IsHit(aabb2)) {
-    auto begin = params.prefix_sum[aabb1_id];
-    auto end = params.prefix_sum[aabb1_id + 1];
-    for (auto offset = begin; offset < end; offset++) {
-      auto geom1_id = params.reordered_indices[offset];
-      const auto& mbr1 = params.mbrs1[geom1_id];
-      if (mbr1.intersects(mbr2)) {
-        params.ids.Append(thrust::make_pair(geom1_id, geom2_id));
-      }
+    if (mbr1.intersects(mbr2)) {
+      params.ids.Append(thrust::make_pair(geom1_id, geom2_id));
     }
   }
 }
@@ -43,10 +38,11 @@ extern "C" __global__ void __raygen__gpuspatial() {
   using point_t = gpuspatial::ShaderPointType;
   constexpr int n_dim = point_t::n_dim;
 
-  for (uint32_t i = optixGetLaunchIndex().x; i < params.aabbs1.size();
+  for (uint32_t i = optixGetLaunchIndex().x; i < params.mbrs1.size();
        i += optixGetLaunchDimensions().x) {
-    const auto& aabb = params.aabbs1[i];
-    gpuspatial::detail::RayParams<n_dim> ray_params(aabb, false);
+    const auto& mbr1 = params.mbrs1[i];
+    auto aabb1 = mbr1.ToOptixAabb();
+    gpuspatial::detail::RayParams<n_dim> ray_params(aabb1, false);
     float3 origin, dir;
 
     origin.x = ray_params.o.x;
