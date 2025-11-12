@@ -24,11 +24,8 @@ namespace gpuspatial {
 
 template <typename T>
 class WKBLoaderTest : public ::testing::Test {};
-using PointIndexTypePairs1 =
-    ::testing::Types<std::pair<gpuspatial::Point<double, 2>, uint32_t>>;
 
-TYPED_TEST_SUITE(WKBLoaderTest, PointIndexTypePairs1);
-#if 1
+TYPED_TEST_SUITE(WKBLoaderTest, TestUtils::PointIndexTypePairs);
 TYPED_TEST(WKBLoaderTest, Point) {
   using point_t = typename TypeParam::first_type;
   using index_t = typename TypeParam::second_type;
@@ -304,13 +301,13 @@ TYPED_TEST(WKBLoaderTest, PolygonWKBLoaderWithHoles) {
       TestUtils::ToVector(cuda_stream, offsets.polygon_offsets.ps_num_points);
   auto mbrs = TestUtils::ToVector(cuda_stream, geometries.get_mbrs());
   cuda_stream.synchronize();
-  ArrayView<index_t> v_prefix_sum_polygons(ps_num_rings);
-  ArrayView<index_t> v_prefix_sum_rings(ps_num_points);
+  ArrayView<index_t> v_ps_num_rings(ps_num_rings);
+  ArrayView<index_t> v_ps_num_points(ps_num_points);
   ArrayView<point_t> v_points(points);
   ArrayView<Box<Point<float, point_t::n_dim>>> v_mbrs(mbrs.data(), mbrs.size());
 
-  PolygonArrayView<point_t, index_t> polygon_array(v_prefix_sum_polygons,
-                                                   v_prefix_sum_rings, v_points, v_mbrs);
+  PolygonArrayView<point_t, index_t> polygon_array(v_ps_num_rings, v_ps_num_points,
+                                                   v_points, v_mbrs);
 
   ASSERT_EQ(polygon_array.size(), 5);
 
@@ -557,44 +554,6 @@ TYPED_TEST(WKBLoaderTest, PolygonWKBLoaderMultipolygonLocate) {
     }
   }
 }
-#endif
-
-template <typename VEC_T>
-void printVectorsAsTable(const VEC_T& v1, const VEC_T& v2, const VEC_T& v3) {
-  // 1. Determine the maximum size for iteration
-  size_t maxSize = std::max({v1.size(), v2.size(), v3.size()});
-
-  // 2. Print Header (Vector Indices)
-  std::cout << "Index | Vector 1 | Vector 2 | Vector 3" << std::endl;
-  std::cout << "---------------------------------------" << std::endl;
-
-  // 3. Iterate and Print Rows
-  for (size_t i = 0; i < maxSize; ++i) {
-    // Print Index
-    std::cout << std::setw(5) << i << " | ";
-
-    // Print value from v1 or placeholder
-    if (i < v1.size()) {
-      std::cout << std::setw(8) << v1[i] << " | ";
-    } else {
-      std::cout << std::setw(8) << " - " << " | ";
-    }
-
-    // Print value from v2 or placeholder
-    if (i < v2.size()) {
-      std::cout << std::setw(8) << v2[i] << " | ";
-    } else {
-      std::cout << std::setw(8) << " - " << " | ";
-    }
-
-    // Print value from v3 or placeholder
-    if (i < v3.size()) {
-      std::cout << std::setw(8) << v3[i] << std::endl;
-    } else {
-      std::cout << std::setw(8) << " - " << std::endl;
-    }
-  }
-}
 
 TYPED_TEST(WKBLoaderTest, MixTypes) {
   using point_t = typename TypeParam::first_type;
@@ -643,7 +602,6 @@ TYPED_TEST(WKBLoaderTest, MixTypes) {
   auto mbrs = TestUtils::ToVector(cuda_stream, geometries.get_mbrs());
   cuda_stream.synchronize();
 
-  printVectorsAsTable(ps_num_parts, ps_num_rings, ps_num_points);
   ASSERT_EQ(ps_num_geoms.size(), 10);
 
   ArrayView<GeometryType> v_feature_types(feature_types);
@@ -703,23 +661,14 @@ TYPED_TEST(WKBLoaderTest, MixTypes) {
   ASSERT_EQ(geom_collection_array[8].get_multi_polygon(0).get_polygon(1).num_rings(), 1);
 }
 
-#if 0
-TYPED_TEST(WKBLoaderTest, MixTypes) {
+TYPED_TEST(WKBLoaderTest, GeomCollection) {
   using point_t = typename TypeParam::first_type;
   using index_t = typename TypeParam::second_type;
   nanoarrow::UniqueArrayStream stream;
 
-  // auto path =
-  //     TestUtils::GetTestDataPath("../test_data/natural-earth_countries_wkb.arrows");
-  //
-  // ArrayStreamFromIpc(path, "geometry", stream.get());
-  // FIXME: it interprets  MULTIPOINT (70 70, 80 80)  as LINESTRING
   ArrayStreamFromWKT(
-      {
-          {"GEOMETRYCOLLECTION ( POINT (10 10), LINESTRING (20 20, 30 30, 40 20), GEOMETRYCOLLECTION ( POLYGON ((50 50, 60 50, 60 60, 50 60, 50 50)), MULTIPOINT (70 70, 80 80) ) )"},
-          // {"MULTIPOLYGON(((30 20, 45 40, 10 40, 30 20)), ((15 5, 40 10, 10 30, 15 5),
-          // (20 15, 35 15, 35 25, 20 25, 20 15)))"
-      },
+      {{"GEOMETRYCOLLECTION ( POINT (10 10), LINESTRING (20 20, 30 30, 40 20), GEOMETRYCOLLECTION ( POLYGON ((50 50, 60 50, 60 60, 50 60, 50 50)), MULTIPOINT (70 70, 80 80) ) )",
+        "MULTIPOLYGON(((30 20, 45 40, 10 40, 30 20)), ((15 5, 40 10, 10 30, 15 5), (20 15, 35 15, 35 25, 20 25, 20 15)))"}},
       GEOARROW_TYPE_WKB, stream.get());
   nanoarrow::UniqueArray array;
   ArrowError error;
@@ -729,16 +678,58 @@ TYPED_TEST(WKBLoaderTest, MixTypes) {
 
   ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
 
-  printf("arrow size %ld\n", array->length);
-
   ParallelWkbLoader<point_t, index_t> loader;
   typename ParallelWkbLoader<point_t, index_t>::Config config;
 
   loader.Init(config);
 
   loader.Parse(cuda_stream, array.get(), 0, array->length);
-  loader.Finish(cuda_stream);
+  auto geometries = loader.Finish(cuda_stream);
+
+  const auto& offsets = geometries.get_offsets();
+
+  ASSERT_EQ(geometries.get_geometry_type(), GeometryType::kGeometryCollection);
+
+  auto points = TestUtils::ToVector(cuda_stream, geometries.get_points());
+  auto feature_types =
+      TestUtils::ToVector(cuda_stream, offsets.geom_collection_offsets.feature_types);
+  auto ps_num_geoms =
+      TestUtils::ToVector(cuda_stream, offsets.geom_collection_offsets.ps_num_geoms);
+  auto ps_num_parts =
+      TestUtils::ToVector(cuda_stream, offsets.geom_collection_offsets.ps_num_parts);
+  auto ps_num_rings =
+      TestUtils::ToVector(cuda_stream, offsets.geom_collection_offsets.ps_num_rings);
+  auto ps_num_points =
+      TestUtils::ToVector(cuda_stream, offsets.geom_collection_offsets.ps_num_points);
+  auto mbrs = TestUtils::ToVector(cuda_stream, geometries.get_mbrs());
+  cuda_stream.synchronize();
+  ASSERT_EQ(ps_num_geoms.size(), 3);
+
+  ArrayView<GeometryType> v_feature_types(feature_types);
+  ArrayView<index_t> v_ps_num_geoms(ps_num_geoms);
+  ArrayView<index_t> v_ps_num_parts(ps_num_parts);
+  ArrayView<index_t> v_ps_num_rings(ps_num_rings);
+  ArrayView<index_t> v_ps_num_points(ps_num_points);
+  ArrayView<point_t> v_points(points);
+  ArrayView<Box<Point<float, point_t::n_dim>>> v_mbrs(mbrs.data(), mbrs.size());
+
+  GeometryCollectionArrayView<point_t, index_t> geom_collection_array(
+      v_feature_types, v_ps_num_geoms, v_ps_num_parts, v_ps_num_rings, v_ps_num_points,
+      v_points, v_mbrs);
+
+  ASSERT_EQ(geom_collection_array[0].num_geometries(), 4);
+  ASSERT_EQ(geom_collection_array[0].get_type(0), GeometryType::kPoint);
+  ASSERT_EQ(geom_collection_array[0].get_point(0), point_t(10, 10));
+  ASSERT_EQ(geom_collection_array[0].get_type(1), GeometryType::kLineString);
+  ASSERT_EQ(geom_collection_array[0].get_line_string(1).num_points(), 3);
+  ASSERT_EQ(geom_collection_array[0].get_type(2), GeometryType::kPolygon);
+  ASSERT_EQ(geom_collection_array[0].get_polygon(2).num_rings(), 1);
+  ASSERT_EQ(geom_collection_array[0].get_type(3), GeometryType::kMultiPoint);
+  ASSERT_EQ(geom_collection_array[0].get_multi_point(3).num_points(), 2);
+  ASSERT_EQ(geom_collection_array[1].num_geometries(), 1);
+  ASSERT_EQ(geom_collection_array[1].get_multi_polygon(0).num_polygons(), 2);
+  ASSERT_EQ(geom_collection_array[1].get_multi_polygon(0).get_polygon(0).num_rings(), 1);
+  ASSERT_EQ(geom_collection_array[1].get_multi_polygon(0).get_polygon(1).num_rings(), 2);
 }
-#endif
 
 }  // namespace gpuspatial

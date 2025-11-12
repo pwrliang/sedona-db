@@ -539,8 +539,11 @@ class ParallelWkbLoader {
           // Signal the Next Thread
           next_thread_id_to_run++;
         };
-        run(thread_idx);
-        // workers.emplace_back(run, thread_idx);
+        // run(thread_idx);
+        workers.emplace_back(run, thread_idx);
+      }
+      for (auto& worker : workers) {
+        worker.join();
       }
     }
   }
