@@ -38,11 +38,12 @@ void SpatialJoiner::Init(const Config* config) {
   config_ = *dynamic_cast<const SpatialJoinerConfig*>(config);
   details::RTConfig rt_config = details::get_default_rt_config(config_.ptx_root);
   rt_engine_.Init(rt_config);
-  typename loader_t::Config loader_config;
-  loader_config.parallelism = config_.parsing_threads;
+  loader_t::Config loader_config;
   loader_config.spilling_temp_data = config_.spilling_temp_data;
 
-  build_loader_.Init(loader_config);
+  thread_pool_ = std::make_shared<ThreadPool>(config_.parsing_threads);
+  build_loader_ = std::make_unique<loader_t>(thread_pool_);
+  build_loader_->Init(loader_config);
   stream_pool_ = std::make_unique<rmm::cuda_stream_pool>(config_.concurrency);
   ctx_pool_ = ObjectPool<SpatialJoinerContext>::create(config_.concurrency);
   CUDA_CHECK(cudaDeviceSetLimit(cudaLimitStackSize, config_.stack_size_bytes));
@@ -53,7 +54,7 @@ void SpatialJoiner::Clear() {
   bvh_buffer_ = nullptr;
   geometry_grouper_.Clear();
   auto stream = rmm::cuda_stream_default;
-  build_loader_.Clear(stream);
+  build_loader_->Clear(stream);
   build_geometries_.Clear(stream);
   stream.synchronize();
 }
@@ -61,14 +62,14 @@ void SpatialJoiner::Clear() {
 void SpatialJoiner::PushBuild(const ArrowSchema* schema, const ArrowArray* array,
                               int64_t offset, int64_t length) {
   IntervalRangeMarker marker(array->length, "PushBuild");
-  build_loader_.Parse(rmm::cuda_stream_default, array, offset, length);
+  build_loader_->Parse(rmm::cuda_stream_default, array, offset, length);
 }
 
 void SpatialJoiner::FinishBuilding() {
   RangeMarker marker(true, "FinishBuilding");
   auto stream = rmm::cuda_stream_default;
 
-  build_geometries_ = std::move(build_loader_.Finish(stream));
+  build_geometries_ = std::move(build_loader_->Finish(stream));
 
   if (build_geometries_.get_geometry_type() == GeometryType::kPoint) {
     geometry_grouper_.Group(stream, build_geometries_, config_.n_points_per_aabb);
@@ -101,14 +102,16 @@ void SpatialJoiner::PushStream(Context* base_ctx, const ArrowSchema* schema,
   sw.start();
 #endif
   ctx->array_index_offset = array_index_offset;
-  loader_t stream_loader;
-  typename loader_t::Config loader_config;
-  loader_config.parallelism = config_.parsing_threads;
-  loader_config.spilling_temp_data = config_.spilling_temp_data;
 
-  stream_loader.Init(loader_config);
-  stream_loader.Parse(ctx->cuda_stream, array, offset, length);
-  ctx->stream_geometries = std::move(stream_loader.Finish(ctx->cuda_stream));
+  if (ctx->stream_loader == nullptr) {
+    ctx->stream_loader = std::make_unique<loader_t>(thread_pool_);
+    loader_t::Config loader_config;
+    loader_config.spilling_temp_data = config_.spilling_temp_data;
+
+    ctx->stream_loader->Init(loader_config);
+  }
+  ctx->stream_loader->Parse(ctx->cuda_stream, array, offset, length);
+  ctx->stream_geometries = std::move(ctx->stream_loader->Finish(ctx->cuda_stream));
 
   auto build_type = build_geometries_.get_geometry_type();
   auto stream_type = ctx->stream_geometries.get_geometry_type();
@@ -356,7 +359,6 @@ void SpatialJoiner::filter(SpatialJoinerContext* ctx, uint32_t dim_x, bool swap_
   }
   auto result_size = ctx->results.size(ctx->cuda_stream);
   sw.stop();
-  printf("filter size %u\n", result_size);
 
   if (swap_id && result_size > 0) {
     // swap the pair (build_id, stream_id) to (stream_id, build_id)
@@ -366,7 +368,7 @@ void SpatialJoiner::filter(SpatialJoinerContext* ctx, uint32_t dim_x, bool swap_
                        thrust::swap(pair.first, pair.second);
                      });
   }
-  // TODO refit results buffer
+  ctx->results.shrink_to_fit(ctx->cuda_stream);
 
 #ifdef GPUSPATIAL_PROFILING
   ctx->filter_ms += ctx->timer.stop(ctx->cuda_stream);

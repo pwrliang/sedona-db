@@ -6,6 +6,8 @@
 #include "gpuspatial/geom/geometry_type.cuh"
 #include "gpuspatial/loader/device_geometries.cuh"
 #include "gpuspatial/utils/mem_utils.hpp"
+#include "gpuspatial/utils/thread_pool.h"
+
 #include "nanoarrow/nanoarrow.h"
 #include "rmm/cuda_stream_view.hpp"
 #include "rmm/device_uvector.hpp"
@@ -72,7 +74,7 @@ static int WKBReaderReadUInt32(struct WKBReaderPrivate* s, uint32_t* out,
 template <typename POINT_T, typename INDEX_T>
 struct HostParsedGeometries {
   constexpr static int n_dim = POINT_T::n_dim;
-  using mbr_t = Box<Point<float, n_dim> >;
+  using mbr_t = Box<Point<float, n_dim>>;
   // each feature should have only one type except GeometryCollection
   std::vector<GeometryType> feature_types;
   // This number should be one except GeometryCollection, which should be unnested # of
@@ -379,7 +381,7 @@ struct HostParsedGeometries {
 template <typename POINT_T, typename INDEX_T>
 struct DeviceParsedGeometries {
   constexpr static int n_dim = POINT_T::n_dim;
-  using mbr_t = Box<Point<float, n_dim> >;
+  using mbr_t = Box<Point<float, n_dim>>;
   // will be moved to DeviceGeometries
   rmm::device_uvector<GeometryType> feature_types{0, rmm::cuda_stream_default};
   // These are temp vectors during parsing, which will be used to calculate offsets
@@ -397,7 +399,6 @@ struct DeviceParsedGeometries {
     num_parts = rmm::device_uvector<INDEX_T>(0, rmm::cuda_stream_default, mr);
     num_rings = rmm::device_uvector<INDEX_T>(0, rmm::cuda_stream_default, mr);
     num_points = rmm::device_uvector<INDEX_T>(0, rmm::cuda_stream_default, mr);
-    mbrs = rmm::device_uvector<mbr_t>(0, rmm::cuda_stream_default, mr);
   }
 
   void Clear(rmm::cuda_stream_view stream, bool free_memory = true) {
@@ -418,6 +419,71 @@ struct DeviceParsedGeometries {
       mbrs.shrink_to_fit(stream);
     }
   }
+
+  void Append(rmm::cuda_stream_view stream,
+              const std::vector<HostParsedGeometries<POINT_T, INDEX_T>>& host_geoms) {
+    size_t sz_feature_types = 0;
+    size_t sz_num_geoms = 0;
+    size_t sz_num_parts = 0;
+    size_t sz_num_rings = 0;
+    size_t sz_num_points = 0;
+    size_t sz_vertices = 0;
+    size_t sz_mbrs = 0;
+
+    for (auto& geoms : host_geoms) {
+      sz_feature_types += geoms.feature_types.size();
+      sz_num_geoms += geoms.num_geoms.size();
+      sz_num_parts += geoms.num_parts.size();
+      sz_num_rings += geoms.num_rings.size();
+      sz_num_points += geoms.num_points.size();
+      sz_vertices += geoms.vertices.size();
+      sz_mbrs += geoms.mbrs.size();
+    }
+    size_t prev_sz_feature_types = feature_types.size();
+    size_t prev_sz_num_geoms = num_geoms.size();
+    size_t prev_sz_num_parts = num_parts.size();
+    size_t prev_sz_num_rings = num_rings.size();
+    size_t prev_sz_num_points = num_points.size();
+    size_t prev_sz_vertices = vertices.size();
+    size_t prev_sz_mbrs = mbrs.size();
+
+    feature_types.resize(feature_types.size() + sz_feature_types, stream);
+    num_geoms.resize(num_geoms.size() + sz_num_geoms, stream);
+    num_parts.resize(num_parts.size() + sz_num_parts, stream);
+    num_rings.resize(num_rings.size() + sz_num_rings, stream);
+    num_points.resize(num_points.size() + sz_num_points, stream);
+    vertices.resize(vertices.size() + sz_vertices, stream);
+    mbrs.resize(mbrs.size() + sz_mbrs, stream);
+
+    for (auto& geoms : host_geoms) {
+      detail::async_copy_h2d(stream, geoms.feature_types.data(),
+                             feature_types.data() + prev_sz_feature_types,
+                             geoms.feature_types.size());
+      detail::async_copy_h2d(stream, geoms.num_geoms.data(),
+                             num_geoms.data() + prev_sz_num_geoms,
+                             geoms.num_geoms.size());
+      detail::async_copy_h2d(stream, geoms.num_parts.data(),
+                             num_parts.data() + prev_sz_num_parts,
+                             geoms.num_parts.size());
+      detail::async_copy_h2d(stream, geoms.num_rings.data(),
+                             num_rings.data() + prev_sz_num_rings,
+                             geoms.num_rings.size());
+      detail::async_copy_h2d(stream, geoms.num_points.data(),
+                             num_points.data() + prev_sz_num_points,
+                             geoms.num_points.size());
+      detail::async_copy_h2d(stream, geoms.vertices.data(),
+                             vertices.data() + prev_sz_vertices, geoms.vertices.size());
+      detail::async_copy_h2d(stream, geoms.mbrs.data(), mbrs.data() + prev_sz_mbrs,
+                             geoms.mbrs.size());
+      prev_sz_feature_types += geoms.feature_types.size();
+      prev_sz_num_geoms += geoms.num_geoms.size();
+      prev_sz_num_parts += geoms.num_parts.size();
+      prev_sz_num_rings += geoms.num_rings.size();
+      prev_sz_num_points += geoms.num_points.size();
+      prev_sz_vertices += geoms.vertices.size();
+      prev_sz_mbrs += geoms.mbrs.size();
+    }
+  }
 };
 }  // namespace detail
 
@@ -426,12 +492,10 @@ class ParallelWkbLoader {
   constexpr static int n_dim = POINT_T::n_dim;
   using scalar_t = typename POINT_T::scalar_t;
   // using low precision for memory saving
-  using mbr_t = Box<Point<float, n_dim> >;
+  using mbr_t = Box<Point<float, n_dim>>;
 
  public:
   struct Config {
-    // How many threads to use for parsing WKBs
-    int parallelism = 1;
     // How many rows of WKBs to process in one chunk
     // This value affects the peak memory usage and overheads
     int chunk_size = 256 * 1024;
@@ -441,12 +505,18 @@ class ParallelWkbLoader {
     bool spilling_temp_data = false;
   };
 
+  ParallelWkbLoader()
+      : thread_pool_(std::make_shared<ThreadPool>(std::thread::hardware_concurrency())) {}
+
+  ParallelWkbLoader(const std::shared_ptr<ThreadPool>& thread_pool)
+      : thread_pool_(thread_pool) {}
+
   void Init(const Config& config = Config()) {
     ArrowArrayViewInitFromType(&array_view_, NANOARROW_TYPE_BINARY);
     config_ = config;
-    auto managed_mr = std::make_shared<rmm::mr::managed_memory_resource>();
+    managed_mr_ = std::make_unique<rmm::mr::managed_memory_resource>();
     auto default_mr = rmm::mr::get_current_device_resource_ref();
-    auto mr = config_.spilling_temp_data ? *managed_mr : default_mr;
+    auto mr = config_.spilling_temp_data ? *managed_mr_ : default_mr;
 
     geoms_.Init(mr);
     geometry_type_ = GeometryType::kNull;
@@ -459,12 +529,13 @@ class ParallelWkbLoader {
 
   void Parse(rmm::cuda_stream_view stream, const ArrowArray* array, int64_t offset,
              int64_t length) {
+    using host_geometries_t = detail::HostParsedGeometries<POINT_T, INDEX_T>;
     ArrowError arrow_error;
     if (ArrowArrayViewSetArray(&array_view_, array, &arrow_error) != NANOARROW_OK) {
       throw std::runtime_error("ArrowArrayViewSetArray error " +
                                std::string(arrow_error.message));
     }
-    auto parallelism = config_.parallelism;
+    auto parallelism = thread_pool_->num_threads();
     auto chunk_size = config_.chunk_size;
     auto n_chunks = (length + chunk_size - 1) / chunk_size;
 
@@ -485,13 +556,8 @@ class ParallelWkbLoader {
       auto chunk_end = std::min(length, (chunk + 1) * chunk_size);
       auto work_size = chunk_end - chunk_start;
 
-      std::vector<std::thread> workers;
-
+      std::vector<std::future<host_geometries_t>> pending_local_geoms;
       auto thread_work_size = (work_size + parallelism - 1) / parallelism;
-      std::atomic<int> next_thread_id_to_run{0};
-      std::mutex mtx;
-      std::condition_variable cv;
-      std::unique_lock lock(mtx);
 
       // Each thread will parse in parallel and store results sequentially
       for (int thread_idx = 0; thread_idx < parallelism; thread_idx++) {
@@ -500,8 +566,7 @@ class ParallelWkbLoader {
           auto thread_work_start = chunk_start + tid * thread_work_size;
           auto thread_work_end =
               std::min(chunk_end, thread_work_start + thread_work_size);
-          detail::HostParsedGeometries<POINT_T, INDEX_T> local_geoms(
-              multi, has_geometry_collection, create_mbr);
+          host_geometries_t local_geoms(multi, has_geometry_collection, create_mbr);
           GeoArrowWKBReader reader;
           GeoArrowError error;
           GEOARROW_THROW_NOT_OK(nullptr, GeoArrowWKBReaderInit(&reader));
@@ -524,27 +589,16 @@ class ParallelWkbLoader {
             }
           }
 
-          // Wait until the shared counter matches this thread's ID
-          cv.wait(lock, [&]() { return tid == next_thread_id_to_run; });
-
-          appendVector(stream, geoms_.feature_types, local_geoms.feature_types);
-          appendVector(stream, geoms_.num_geoms, local_geoms.num_geoms);
-          appendVector(stream, geoms_.num_parts, local_geoms.num_parts);
-          appendVector(stream, geoms_.num_rings, local_geoms.num_rings);
-          appendVector(stream, geoms_.num_points, local_geoms.num_points);
-          appendVector(stream, geoms_.vertices, local_geoms.vertices);
-          appendVector(stream, geoms_.mbrs, local_geoms.mbrs);
-          stream.synchronize();  // Ensure all appends are done before signaling next
-          // thread
-          // Signal the Next Thread
-          next_thread_id_to_run++;
+          return std::move(local_geoms);
         };
-        run(thread_idx);
-        // workers.emplace_back(run, thread_idx);
+        pending_local_geoms.push_back(std::move(thread_pool_->enqueue(run, thread_idx)));
       }
-      for (auto& worker : workers) {
-        worker.join();
+
+      std::vector<host_geometries_t> local_geoms;
+      for (auto& fu : pending_local_geoms) {
+        local_geoms.push_back(std::move(fu.get()));
       }
+      geoms_.Append(stream, local_geoms);
     }
   }
 
@@ -644,7 +698,9 @@ class ParallelWkbLoader {
   Config config_;
   ArrowArrayView array_view_;
   GeometryType geometry_type_;
+  std::unique_ptr<rmm::mr::managed_memory_resource> managed_mr_;
   detail::DeviceParsedGeometries<POINT_T, INDEX_T> geoms_;
+  std::shared_ptr<ThreadPool> thread_pool_;
 
   void updateGeometryType(int64_t offset, int64_t length) {
     if (geometry_type_ == GeometryType::kGeometryCollection) {
@@ -654,9 +710,11 @@ class ParallelWkbLoader {
 
     std::vector<bool> type_flags(8 /*WKB types*/, false);
     std::vector<std::thread> workers;
-    auto thread_work_size = (length + config_.parallelism - 1) / config_.parallelism;
+    auto parallelism = thread_pool_->num_threads();
+    auto thread_work_size = (length + parallelism - 1) / parallelism;
+    std::vector<std::future<void>> futures;
 
-    for (int thread_idx = 0; thread_idx < config_.parallelism; thread_idx++) {
+    for (int thread_idx = 0; thread_idx < parallelism; thread_idx++) {
       auto run = [&](int tid) {
         auto thread_work_start = tid * thread_work_size;
         auto thread_work_end = std::min(length, thread_work_start + thread_work_size);
@@ -688,10 +746,10 @@ class ParallelWkbLoader {
           type_flags[geometry_type] = true;
         }
       };
-      workers.emplace_back(run, thread_idx);
+      futures.push_back(std::move(thread_pool_->enqueue(run, thread_idx)));
     }
-    for (auto& worker : workers) {
-      worker.join();
+    for (auto& fu : futures) {
+      fu.get();
     }
 
     std::unordered_set<GeometryType> types;

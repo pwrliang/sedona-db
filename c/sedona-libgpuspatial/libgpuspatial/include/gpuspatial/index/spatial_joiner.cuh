@@ -12,6 +12,7 @@
 #include "gpuspatial/loader/parallel_wkb_loader.h"
 #include "gpuspatial/utils/gpu_timer.hpp"
 #include "gpuspatial/utils/queue.h"
+#include "gpuspatial/utils/thread_pool.h"
 
 #include <fstream>
 #include <thread>
@@ -20,7 +21,6 @@
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
-// #include "gpuspatial/loader/geometry_segment.h"
 
 // #define GPUSPATIAL_PROFILING
 namespace gpuspatial {
@@ -60,7 +60,7 @@ class SpatialJoiner : public StreamingJoiner {
     // How many threads to use for parsing WKBs
     uint32_t parsing_threads = std::thread::hardware_concurrency();
     // Whether allowed to spill temporary data to host memory when parsing WKBs
-    bool spilling_temp_data = false;
+    bool spilling_temp_data = true;
     // How many threads are allowed to call PushStream concurrently
     uint32_t concurrency = 1;
     // number of points to represent an AABB when doing point-point queries
@@ -79,6 +79,7 @@ class SpatialJoiner : public StreamingJoiner {
   struct SpatialJoinerContext : Context {
     rmm::cuda_stream_view cuda_stream;
     std::string shader_id;
+    std::unique_ptr<loader_t> stream_loader;
     dev_geometries_t stream_geometries;
     std::unique_ptr<rmm::device_buffer> bvh_buffer;
     OptixTraversableHandle handle;
@@ -145,9 +146,10 @@ class SpatialJoiner : public StreamingJoiner {
  private:
   SpatialJoinerConfig config_;
   std::unique_ptr<rmm::cuda_stream_pool> stream_pool_;
+  std::shared_ptr<ThreadPool> thread_pool_;
   details::RTEngine rt_engine_;
   std::unique_ptr<rmm::device_buffer> bvh_buffer_;
-  loader_t build_loader_;
+  std::unique_ptr<loader_t> build_loader_;
 
   DeviceGeometries<point_t, index_t> build_geometries_;
   // For grouping points with space-filing curve

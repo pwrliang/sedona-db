@@ -61,6 +61,12 @@ class Queue {
   //   counter_.Swap(rhs.counter_);
   // }
 
+  void shrink_to_fit(const rmm::cuda_stream_view& stream) {
+    auto s = size(stream);
+    data_->resize(s, stream);
+    data_->shrink_to_fit(stream);
+  }
+
   size_t capacity() const { return data_->capacity(); }
 
  private:
