@@ -1,4 +1,3 @@
-
 #include "array_stream.hpp"
 #include "gpuspatial/index/spatial_joiner.cuh"
 #include "gpuspatial/loader/device_geometries.cuh"
@@ -10,12 +9,39 @@
 #include <geoarrow/geoarrow.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-
+#include <numeric>  // For std::iota
 namespace TestUtils {
 std::string GetTestDataPath(const std::string& relative_path_to_file);
 }
 
 namespace gpuspatial {
+template <typename KeyType, typename ValueType>
+void sort_vectors_by_index(std::vector<KeyType>& keys, std::vector<ValueType>& values) {
+  // 1. Create an index vector {0, 1, 2, ...}
+  std::vector<size_t> indices(keys.size());
+  // Fills 'indices' with 0, 1, 2, ..., N-1
+  std::iota(indices.begin(), indices.end(), 0);
+
+  // 2. Sort the indices based on the values in the 'keys' vector
+  // The lambda compares the key elements at two different indices
+  std::sort(indices.begin(), indices.end(), [&keys, &values](size_t i, size_t j) {
+    return keys[i] < keys[j] || keys[i] == keys[j] && values[i] < values[j];
+  });
+
+  // 3. Create new, sorted vectors
+  std::vector<KeyType> sorted_keys;
+  std::vector<ValueType> sorted_values;
+
+  for (size_t i : indices) {
+    sorted_keys.push_back(keys[i]);
+    sorted_values.push_back(values[i]);
+  }
+
+  // Replace the original vectors with the sorted ones
+  keys = std::move(sorted_keys);
+  values = std::move(sorted_values);
+}
+
 TEST(JoinerTest, PIP) {
   SpatialJoiner::SpatialJoinerConfig config;
   std::string ptx_root = TestUtils::GetTestDataPath("shaders_ptx");
@@ -37,7 +63,7 @@ TEST(JoinerTest, PIP) {
   ArrowErrorSet(&error, "");
   int n_row_groups = 100;
   int array_index_offset = 0;
-  std::vector<uint32_t> build_indices, array_indices;
+  std::vector<uint32_t> build_indices, stream_indices;
   geoarrow::geos::ArrayReader reader;
 
   class GEOSCppHandle {
@@ -57,13 +83,11 @@ TEST(JoinerTest, PIP) {
   struct Payload {
     GEOSContextHandle_t handle;
     const GEOSGeometry* geom;
-    int64_t build_index_offset;
     int64_t stream_index_offset;
     std::vector<uint32_t> build_indices;
     std::vector<uint32_t> stream_indices;
   };
 
-  int64_t build_count = 0;
   spatial_joiner.Init(&config);
   for (int i = 0; i < n_row_groups; i++) {
     ASSERT_EQ(ArrowArrayStreamGetNext(poly_stream.get(), build_array.get(), &error),
@@ -76,17 +100,16 @@ TEST(JoinerTest, PIP) {
     ASSERT_EQ(ArrowArrayStreamGetSchema(point_stream.get(), stream_schema.get(), &error),
               NANOARROW_OK);
 
-
     spatial_joiner.Clear();
     spatial_joiner.PushBuild(nullptr, build_array.get(), 0, build_array->length);
     auto context = spatial_joiner.CreateContext();
 
     build_indices.clear();
-    array_indices.clear();
+    stream_indices.clear();
     spatial_joiner.FinishBuilding();
     spatial_joiner.PushStream(context.get(), nullptr, stream_array.get(), 0,
                               stream_array->length, Predicate::kContains, &build_indices,
-                              &array_indices, array_index_offset);
+                              &stream_indices, array_index_offset);
 
     geom_polygons.resize(build_array->length);
     geom_points.resize(stream_array->length);
@@ -113,7 +136,6 @@ TEST(JoinerTest, PIP) {
     Payload payload;
     payload.handle = handle.handle;
 
-    payload.build_index_offset = build_count;
     payload.stream_index_offset = array_index_offset;
 
     for (size_t j = 0; j < n_points; j++) {
@@ -136,7 +158,7 @@ TEST(JoinerTest, PIP) {
             if (GEOSContains_r(payload->handle, polygon, point) == 1) {
               auto polygon_id = (size_t)GEOSGeom_getUserData_r(payload->handle, polygon);
               auto point_id = (size_t)GEOSGeom_getUserData_r(payload->handle, point);
-              payload->build_indices.push_back(payload->build_index_offset + polygon_id);
+              payload->build_indices.push_back(polygon_id);
               payload->stream_indices.push_back(payload->stream_index_offset + point_id);
             }
           },
@@ -146,8 +168,14 @@ TEST(JoinerTest, PIP) {
     GEOSSTRtree_destroy_r(handle.handle, tree);
 
     ASSERT_EQ(payload.build_indices.size(), build_indices.size());
+    ASSERT_EQ(payload.stream_indices.size(), stream_indices.size());
+    sort_vectors_by_index(payload.build_indices, payload.stream_indices);
+    sort_vectors_by_index(build_indices, stream_indices);
+    for (size_t j = 0; j < build_indices.size(); j++) {
+      ASSERT_EQ(payload.build_indices[j], build_indices[j]);
+      ASSERT_EQ(payload.stream_indices[j], stream_indices[j]);
+    }
 
-    build_count += build_array->length;
     array_index_offset += stream_array->length;
   }
 }
@@ -173,7 +201,7 @@ TEST(JoinerTest, PIPInverse) {
   ArrowErrorSet(&error, "");
   int n_row_groups = 100;
   int array_index_offset = 0;
-  std::vector<uint32_t> build_indices, array_indices;
+  std::vector<uint32_t> build_indices, stream_indices;
   geoarrow::geos::ArrayReader reader;
 
   class GEOSCppHandle {
@@ -193,46 +221,44 @@ TEST(JoinerTest, PIPInverse) {
   struct Payload {
     GEOSContextHandle_t handle;
     const GEOSGeometry* geom;
-    int64_t build_index_offset;
     int64_t stream_index_offset;
     std::vector<uint32_t> build_indices;
     std::vector<uint32_t> stream_indices;
   };
 
-  int64_t build_count = 0;
   spatial_joiner.Init(&config);
   for (int i = 0; i < n_row_groups; i++) {
-    ASSERT_EQ(ArrowArrayStreamGetNext(poly_stream.get(), build_array.get(), &error),
+    ASSERT_EQ(ArrowArrayStreamGetNext(poly_stream.get(), stream_array.get(), &error),
               NANOARROW_OK);
-    ASSERT_EQ(ArrowArrayStreamGetSchema(poly_stream.get(), build_schema.get(), &error),
+    ASSERT_EQ(ArrowArrayStreamGetSchema(poly_stream.get(), stream_schema.get(), &error),
               NANOARROW_OK);
 
-    ASSERT_EQ(ArrowArrayStreamGetNext(point_stream.get(), stream_array.get(), &error),
+    ASSERT_EQ(ArrowArrayStreamGetNext(point_stream.get(), build_array.get(), &error),
               NANOARROW_OK);
-    ASSERT_EQ(ArrowArrayStreamGetSchema(point_stream.get(), stream_schema.get(), &error),
+    ASSERT_EQ(ArrowArrayStreamGetSchema(point_stream.get(), build_schema.get(), &error),
               NANOARROW_OK);
 
     spatial_joiner.Clear();
     // build with points, stream with polygons
-    spatial_joiner.PushBuild(nullptr, stream_array.get(), 0, stream_array->length);
+    spatial_joiner.PushBuild(nullptr, build_array.get(), 0, build_array->length);
     auto context = spatial_joiner.CreateContext();
 
     build_indices.clear();
-    array_indices.clear();
+    stream_indices.clear();
     spatial_joiner.FinishBuilding();
-    spatial_joiner.PushStream(context.get(), nullptr, build_array.get(), 0, build_array->length,
-                             Predicate::kWithin, &build_indices, &array_indices,
-                             array_index_offset);
+    spatial_joiner.PushStream(context.get(), nullptr, stream_array.get(), 0,
+                              stream_array->length, Predicate::kWithin, &build_indices,
+                              &stream_indices, array_index_offset);
 
-    geom_polygons.resize(build_array->length);
-    geom_points.resize(stream_array->length);
+    geom_polygons.resize(stream_array->length);
+    geom_points.resize(build_array->length);
 
     size_t n_polygons = 0, n_points = 0;
     ASSERT_EQ(reader.Read(build_array.get(), 0, build_array->length,
-                          geom_polygons.mutable_data(), &n_polygons),
+                          geom_points.mutable_data(), &n_points),
               GEOARROW_GEOS_OK);
     ASSERT_EQ(reader.Read(stream_array.get(), 0, stream_array->length,
-                          geom_points.mutable_data(), &n_points),
+                          geom_polygons.mutable_data(), &n_polygons),
               GEOARROW_GEOS_OK);
 
     auto* tree = GEOSSTRtree_create_r(handle.handle, 10);
@@ -249,7 +275,6 @@ TEST(JoinerTest, PIPInverse) {
     Payload payload;
     payload.handle = handle.handle;
 
-    payload.build_index_offset = build_count;
     payload.stream_index_offset = array_index_offset;
 
     for (size_t j = 0; j < n_points; j++) {
@@ -272,8 +297,9 @@ TEST(JoinerTest, PIPInverse) {
             if (GEOSContains_r(payload->handle, polygon, point) == 1) {
               auto polygon_id = (size_t)GEOSGeom_getUserData_r(payload->handle, polygon);
               auto point_id = (size_t)GEOSGeom_getUserData_r(payload->handle, point);
-              payload->build_indices.push_back(payload->build_index_offset + polygon_id);
-              payload->stream_indices.push_back(payload->stream_index_offset + point_id);
+              payload->build_indices.push_back(point_id);
+              payload->stream_indices.push_back(payload->stream_index_offset +
+                                                polygon_id);
             }
           },
           (void*)&payload);
@@ -282,12 +308,17 @@ TEST(JoinerTest, PIPInverse) {
     GEOSSTRtree_destroy_r(handle.handle, tree);
 
     ASSERT_EQ(payload.build_indices.size(), build_indices.size());
+    ASSERT_EQ(payload.stream_indices.size(), stream_indices.size());
+    sort_vectors_by_index(payload.build_indices, payload.stream_indices);
+    sort_vectors_by_index(build_indices, stream_indices);
+    for (size_t j = 0; j < build_indices.size(); j++) {
+      ASSERT_EQ(payload.build_indices[j], build_indices[j]);
+      ASSERT_EQ(payload.stream_indices[j], stream_indices[j]);
+    }
 
-    build_count += build_array->length;
     array_index_offset += stream_array->length;
   }
 }
-
 TEST(JoinerTest, PolygonPolygonContains) {
   SpatialJoiner::SpatialJoinerConfig config;
   std::string ptx_root = TestUtils::GetTestDataPath("shaders_ptx");
@@ -309,7 +340,7 @@ TEST(JoinerTest, PolygonPolygonContains) {
   ArrowErrorSet(&error, "");
   int n_row_groups = 100;
   int array_index_offset = 0;
-  std::vector<uint32_t> build_indices, array_indices;
+  std::vector<uint32_t> build_indices, stream_indices;
   geoarrow::geos::ArrayReader reader;
 
   class GEOSCppHandle {
@@ -353,11 +384,11 @@ TEST(JoinerTest, PolygonPolygonContains) {
     auto context = spatial_joiner.CreateContext();
 
     build_indices.clear();
-    array_indices.clear();
+    stream_indices.clear();
     spatial_joiner.FinishBuilding();
     spatial_joiner.PushStream(context.get(), nullptr, stream_array.get(), 0,
                               stream_array->length, Predicate::kContains, &build_indices,
-                              &array_indices, array_index_offset);
+                              &stream_indices, array_index_offset);
     geom_polygons1.resize(build_array->length);
     geom_polygons2.resize(stream_array->length);
 
@@ -420,5 +451,4 @@ TEST(JoinerTest, PolygonPolygonContains) {
     array_index_offset += stream_array->length;
   }
 }
-
 }  // namespace gpuspatial

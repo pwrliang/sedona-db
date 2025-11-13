@@ -188,7 +188,7 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
         return !detail::EvaluatePredicate(predicate, IM);
       });
   auto new_size = end - ids.data();
-  ids.set_size(stream, end - ids.data());
+  ids.set_size(stream, new_size);
 }
 
 template <typename POINT_T, typename INDEX_T>
@@ -196,7 +196,8 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
     const rmm::cuda_stream_view& stream,
     const PolygonArrayView<POINT_T, INDEX_T>& geom_array1,
     const PointArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
-    Queue<thrust::pair<uint32_t, uint32_t>>& ids) {
+    Queue<thrust::pair<uint32_t, uint32_t>>& ids, bool inverse) {
+  printf("Use overload, inverse = %d\n", inverse);
   auto ids_size = ids.size(stream);
 
   if (ids_size == 0) {
@@ -293,6 +294,9 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
                         const auto& geom2 = geom_array2[geom2_id];
 
                         auto IM = relate(geom1, geom2, p_locations[i]);
+                        if (inverse) {
+                          IM = IM__TWIST(IM);
+                        }
                         if (detail::EvaluatePredicate(predicate, IM)) {
                           return pair;
                         } else {
@@ -311,9 +315,29 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
 template <typename POINT_T, typename INDEX_T>
 void RelateEngine<POINT_T, INDEX_T>::Evaluate(
     const rmm::cuda_stream_view& stream,
+    const PointArrayView<POINT_T, INDEX_T>& geom_array1,
+    const PolygonArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
+    Queue<thrust::pair<uint32_t, uint32_t>>& ids) {
+  // Reuse the polygon-point evaluation by swapping the order
+  thrust::for_each(rmm::exec_policy_nosync(stream), ids.data(),
+                   ids.data() + ids.size(stream),
+                   [] __device__(thrust::pair<uint32_t, uint32_t> & pair) {
+                     thrust::swap(pair.first, pair.second);
+                   });
+  Evaluate(stream, geom_array2, geom_array1, predicate, ids, true /*inverse IM*/);
+  thrust::for_each(rmm::exec_policy_nosync(stream), ids.data(),
+                   ids.data() + ids.size(stream),
+                   [] __device__(thrust::pair<uint32_t, uint32_t> & pair) {
+                     thrust::swap(pair.first, pair.second);
+                   });
+}
+
+template <typename POINT_T, typename INDEX_T>
+void RelateEngine<POINT_T, INDEX_T>::Evaluate(
+    const rmm::cuda_stream_view& stream,
     const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array1,
     const PointArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
-    Queue<thrust::pair<uint32_t, uint32_t>>& ids) {
+    Queue<thrust::pair<uint32_t, uint32_t>>& ids, bool inverse) {
   Stopwatch sw;
   sw.start();
   auto ids_size = ids.size(stream);
@@ -427,6 +451,9 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
                         const auto& geom2 = geom_array2[geom2_id];
 
                         auto IM = p_IMs[i];
+                        if (inverse) {
+                          IM = IM__TWIST(IM);
+                        }
                         if (detail::EvaluatePredicate(predicate, IM)) {
                           return pair;
                         } else {
@@ -479,26 +506,6 @@ template <typename POINT_T, typename INDEX_T>
 void RelateEngine<POINT_T, INDEX_T>::Evaluate(
     const rmm::cuda_stream_view& stream,
     const PointArrayView<POINT_T, INDEX_T>& geom_array1,
-    const PolygonArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
-    Queue<thrust::pair<uint32_t, uint32_t>>& ids) {
-  // Reuse the polygon-point evaluation by swapping the order
-  thrust::for_each(rmm::exec_policy_nosync(stream), ids.data(),
-                   ids.data() + ids.size(stream),
-                   [] __device__(thrust::pair<uint32_t, uint32_t> & pair) {
-                     thrust::swap(pair.first, pair.second);
-                   });
-  Evaluate(stream, geom_array2, geom_array1, predicate, ids);
-  thrust::for_each(rmm::exec_policy_nosync(stream), ids.data(),
-                   ids.data() + ids.size(stream),
-                   [] __device__(thrust::pair<uint32_t, uint32_t> & pair) {
-                     thrust::swap(pair.first, pair.second);
-                   });
-}
-
-template <typename POINT_T, typename INDEX_T>
-void RelateEngine<POINT_T, INDEX_T>::Evaluate(
-    const rmm::cuda_stream_view& stream,
-    const PointArrayView<POINT_T, INDEX_T>& geom_array1,
     const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
     Queue<thrust::pair<uint32_t, uint32_t>>& ids) {
   // Reuse the polygon-point evaluation by swapping the order
@@ -507,7 +514,7 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
                    [] __device__(thrust::pair<uint32_t, uint32_t> & pair) {
                      thrust::swap(pair.first, pair.second);
                    });
-  Evaluate(stream, geom_array2, geom_array1, predicate, ids);
+  Evaluate(stream, geom_array2, geom_array1, predicate, ids, true /*inverse IM*/);
   thrust::for_each(rmm::exec_policy_nosync(stream), ids.data(),
                    ids.data() + ids.size(stream),
                    [] __device__(thrust::pair<uint32_t, uint32_t> & pair) {

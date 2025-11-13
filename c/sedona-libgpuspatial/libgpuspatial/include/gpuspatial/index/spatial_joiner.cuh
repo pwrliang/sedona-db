@@ -86,7 +86,6 @@ class SpatialJoiner : public StreamingJoiner {
     std::unique_ptr<rmm::device_buffer> launch_params_buffer;
     // output
     Queue<thrust::pair<index_t, index_t>> results;
-    std::unique_ptr<rmm::device_uvector<uint32_t>> tmp_result_buffer;
     int32_t array_index_offset;
 #ifdef GPUSPATIAL_PROFILING
     GPUTimer timer;

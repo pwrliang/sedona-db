@@ -100,7 +100,7 @@ void SpatialJoiner::PushStream(Context* base_ctx, const ArrowSchema* schema,
   Stopwatch sw;
   sw.start();
 #endif
-  ctx->array_index_offset = array_index_offset + offset;
+  ctx->array_index_offset = array_index_offset;
   loader_t stream_loader;
   typename loader_t::Config loader_config;
   loader_config.parallelism = config_.parsing_threads;
@@ -109,6 +109,7 @@ void SpatialJoiner::PushStream(Context* base_ctx, const ArrowSchema* schema,
   stream_loader.Init(loader_config);
   stream_loader.Parse(ctx->cuda_stream, array, offset, length);
   ctx->stream_geometries = std::move(stream_loader.Finish(ctx->cuda_stream));
+
   auto build_type = build_geometries_.get_geometry_type();
   auto stream_type = ctx->stream_geometries.get_geometry_type();
 
@@ -355,16 +356,17 @@ void SpatialJoiner::filter(SpatialJoinerContext* ctx, uint32_t dim_x, bool swap_
   }
   auto result_size = ctx->results.size(ctx->cuda_stream);
   sw.stop();
+  printf("filter size %u\n", result_size);
 
   if (swap_id && result_size > 0) {
     // swap the pair (build_id, stream_id) to (stream_id, build_id)
-    thrust::transform(rmm::exec_policy_nosync(ctx->cuda_stream), ctx->results.data(),
-                      ctx->results.data() + result_size, ctx->results.data(),
-                      [] __device__(const thrust::pair<uint32_t, uint32_t>& pair)
-                          -> thrust::pair<uint32_t, uint32_t> {
-                        return thrust::make_pair(pair.second, pair.first);
-                      });
+    thrust::for_each(rmm::exec_policy_nosync(ctx->cuda_stream), ctx->results.data(),
+                     ctx->results.data() + result_size,
+                     [] __device__(thrust::pair<uint32_t, uint32_t> & pair) {
+                       thrust::swap(pair.first, pair.second);
+                     });
   }
+  // TODO refit results buffer
 
 #ifdef GPUSPATIAL_PROFILING
   ctx->filter_ms += ctx->timer.stop(ctx->cuda_stream);
@@ -387,43 +389,41 @@ void SpatialJoiner::refine(SpatialJoinerContext* ctx, Predicate predicate,
 #ifdef GPUSPATIAL_PROFILING
   ctx->timer.start(ctx->cuda_stream);
 #endif
-  ctx->tmp_result_buffer =
-      std::make_unique<rmm::device_uvector<uint32_t>>(n_results, ctx->cuda_stream);
+  rmm::device_uvector<uint32_t> tmp_result_buffer(n_results, ctx->cuda_stream);
 
-  auto prev_size = build_indices->size();
-  printf(
-      "DEBUG refine(): prev build_indices size=%lu, n_results=%u, array_index_offset=%u\n",
-      prev_size, n_results, ctx->array_index_offset);
+  // printf(
+  // "DEBUG refine(): prev build_indices size=%lu, n_results=%u, array_index_offset=%u\n",
+  // prev_size, n_results, ctx->array_index_offset);
 
   thrust::transform(
       rmm::exec_policy_nosync(ctx->cuda_stream), ctx->results.data(),
-      ctx->results.data() + n_results, ctx->tmp_result_buffer->begin(),
+      ctx->results.data() + n_results, tmp_result_buffer.begin(),
       [] __device__(const thrust::pair<index_t, index_t>& pair) -> uint32_t {
         return pair.first;
       });
-
+  auto prev_size = build_indices->size();
   build_indices->resize(build_indices->size() + n_results);
 
-  CUDA_CHECK(cudaMemcpyAsync(build_indices->data() + prev_size,
-                             ctx->tmp_result_buffer->data(), sizeof(index_t) * n_results,
-                             cudaMemcpyDeviceToHost, ctx->cuda_stream));
+  CUDA_CHECK(cudaMemcpyAsync(build_indices->data() + prev_size, tmp_result_buffer.data(),
+                             sizeof(uint32_t) * n_results, cudaMemcpyDeviceToHost,
+                             ctx->cuda_stream));
 
   auto array_index_offset = ctx->array_index_offset;
 
   thrust::transform(
       rmm::exec_policy_nosync(ctx->cuda_stream), ctx->results.data(),
-      ctx->results.data() + n_results, ctx->tmp_result_buffer->begin(),
+      ctx->results.data() + n_results, tmp_result_buffer.begin(),
       [=] __device__(const thrust::pair<index_t, index_t>& pair) -> uint32_t {
         return pair.second + array_index_offset;
       });
 
   stream_indices->resize(stream_indices->size() + n_results);
-  printf("DEBUG refine(): final build_indices size=%lu, stream_indices size=%lu\n",
-         build_indices->size(), stream_indices->size());
+  // printf("DEBUG refine(): final build_indices size=%lu, stream_indices size=%lu\n",
+  // build_indices->size(), stream_indices->size());
 
-  CUDA_CHECK(cudaMemcpyAsync(stream_indices->data() + prev_size,
-                             ctx->tmp_result_buffer->data(), sizeof(uint32_t) * n_results,
-                             cudaMemcpyDeviceToHost, ctx->cuda_stream));
+  CUDA_CHECK(cudaMemcpyAsync(stream_indices->data() + prev_size, tmp_result_buffer.data(),
+                             sizeof(uint32_t) * n_results, cudaMemcpyDeviceToHost,
+                             ctx->cuda_stream));
 #ifdef GPUSPATIAL_PROFILING
   ctx->copy_res_ms += ctx->timer.stop(ctx->cuda_stream);
 #endif

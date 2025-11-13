@@ -37,26 +37,28 @@ class RelateEngine {
                 const GEOM2_ARRAY_VIEW_T& geom_array2, Predicate predicate,
                 Queue<thrust::pair<uint32_t, uint32_t>>& ids);
 
+  // This is a generic version that can accept any two geometry array views
   template <typename GEOM1_ARRAY_VIEW_T, typename GEOM2_ARRAY_VIEW_T>
   void Evaluate(const rmm::cuda_stream_view& stream,
                 const GEOM1_ARRAY_VIEW_T& geom_array1,
                 const GEOM2_ARRAY_VIEW_T& geom_array2, Predicate predicate,
                 Queue<thrust::pair<uint32_t, uint32_t>>& ids);
 
+  // These are the specific overloads for RT-accelerated PIP queries
   void Evaluate(const rmm::cuda_stream_view& stream,
                 const PolygonArrayView<POINT_T, INDEX_T>& geom_array1,
                 const PointArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
-                Queue<thrust::pair<uint32_t, uint32_t>>& ids);
-
-  void Evaluate(const rmm::cuda_stream_view& stream,
-                const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array1,
-                const PointArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
-                Queue<thrust::pair<uint32_t, uint32_t>>& ids);
+                Queue<thrust::pair<uint32_t, uint32_t>>& ids, bool inverse = false);
 
   void Evaluate(const rmm::cuda_stream_view& stream,
                 const PointArrayView<POINT_T, INDEX_T>& geom_array1,
                 const PolygonArrayView<POINT_T, INDEX_T>& geom_array2,
                 Predicate predicate, Queue<thrust::pair<uint32_t, uint32_t>>& ids);
+
+  void Evaluate(const rmm::cuda_stream_view& stream,
+                const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array1,
+                const PointArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
+                Queue<thrust::pair<uint32_t, uint32_t>>& ids, bool inverse = false);
 
   void Evaluate(const rmm::cuda_stream_view& stream,
                 const PointArrayView<POINT_T, INDEX_T>& geom_array1,

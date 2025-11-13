@@ -56,6 +56,7 @@ static int WKBReaderReadUInt32(struct WKBReaderPrivate* s, uint32_t* out,
     return EINVAL;
   }
 }
+
 /**
  * @brief This is a general structure to hold parsed geometries on host side
  * There are three modes: Single geometry type, Multi geometry type, GeometryCollection
@@ -396,6 +397,7 @@ struct DeviceParsedGeometries {
     num_parts = rmm::device_uvector<INDEX_T>(0, rmm::cuda_stream_default, mr);
     num_rings = rmm::device_uvector<INDEX_T>(0, rmm::cuda_stream_default, mr);
     num_points = rmm::device_uvector<INDEX_T>(0, rmm::cuda_stream_default, mr);
+    mbrs = rmm::device_uvector<mbr_t>(0, rmm::cuda_stream_default, mr);
   }
 
   void Clear(rmm::cuda_stream_view stream, bool free_memory = true) {
@@ -405,6 +407,7 @@ struct DeviceParsedGeometries {
     num_rings.resize(0, stream);
     num_points.resize(0, stream);
     vertices.resize(0, stream);
+    mbrs.resize(0, stream);
     if (free_memory) {
       feature_types.shrink_to_fit(stream);
       num_geoms.shrink_to_fit(stream);
@@ -412,6 +415,7 @@ struct DeviceParsedGeometries {
       num_rings.shrink_to_fit(stream);
       num_points.shrink_to_fit(stream);
       vertices.shrink_to_fit(stream);
+      mbrs.shrink_to_fit(stream);
     }
   }
 };
@@ -472,7 +476,6 @@ class ParallelWkbLoader {
     bool create_mbr = geometry_type_ != GeometryType::kPoint;
 
     // reserve space
-    geoms_.num_parts.reserve(length, stream);
     geoms_.vertices.reserve(estimateNumPoints(array, offset, length), stream);
     if (create_mbr) geoms_.mbrs.reserve(array->length, stream);
 
@@ -503,8 +506,8 @@ class ParallelWkbLoader {
           GeoArrowError error;
           GEOARROW_THROW_NOT_OK(nullptr, GeoArrowWKBReaderInit(&reader));
 
-          for (uint32_t work_offset = thread_work_start, i = 0;
-               work_offset < thread_work_end; work_offset++, i++) {
+          for (uint32_t work_offset = thread_work_start; work_offset < thread_work_end;
+               work_offset++) {
             auto arrow_offset = work_offset + offset;
             // handle null value
             if (ArrowArrayViewIsNull(&array_view_, arrow_offset)) {
@@ -517,9 +520,6 @@ class ParallelWkbLoader {
                   &error,
                   GeoArrowWKBReaderRead(&reader, {item.data.as_uint8, item.size_bytes},
                                         &geom, &error));
-              if (work_offset == 7) {
-                printf("");
-              }
               local_geoms.AddGeometry(&geom);
             }
           }
@@ -539,8 +539,8 @@ class ParallelWkbLoader {
           // Signal the Next Thread
           next_thread_id_to_run++;
         };
-        // run(thread_idx);
-        workers.emplace_back(run, thread_idx);
+        run(thread_idx);
+        // workers.emplace_back(run, thread_idx);
       }
       for (auto& worker : workers) {
         worker.join();
@@ -562,27 +562,28 @@ class ParallelWkbLoader {
     rmm::device_uvector<INDEX_T> ps_num_points(0, stream);
     calcPrefixSum(stream, geoms_.num_points, ps_num_points);
 
-    if constexpr (std::is_same_v<scalar_t, double>) {
-      thrust::transform(
-          rmm::exec_policy_nosync(stream), geoms_.mbrs.begin(), geoms_.mbrs.end(),
-          geoms_.mbrs.begin(), [] __device__(const mbr_t& mbr) -> mbr_t {
-            Point<float, n_dim> min_corner, max_corner;
-            for (int dim = 0; dim < n_dim; dim++) {
-              auto min_val = mbr.get_min(dim);
-              auto max_val = mbr.get_max(dim);
-              // Two rounds of next_float to ensure the MBR fully covers the original
-              // geometry, refer to RayJoin paper
-              min_corner[dim] = min_val - next_float_from_double(min_val, -1, 2);
-              max_corner[dim] = max_val + next_float_from_double(max_val, 1, 2);
-            }
-            return {min_corner, max_corner};
-          });
-    }
-
     DeviceGeometries<POINT_T, INDEX_T> device_geometries;
+
+    if constexpr (std::is_same_v<scalar_t, double>) {
+      thrust::transform(rmm::exec_policy_nosync(stream), geoms_.mbrs.begin(),
+                        geoms_.mbrs.end(), geoms_.mbrs.begin(),
+                        [] __device__(const mbr_t& mbr) -> mbr_t {
+                          Point<float, n_dim> min_corner, max_corner;
+                          for (int dim = 0; dim < n_dim; dim++) {
+                            auto min_val = mbr.get_min(dim);
+                            auto max_val = mbr.get_max(dim);
+                            // Two rounds of next_float to ensure the MBR fully covers the
+                            // original geometry, refer to RayJoin paper
+                            min_corner[dim] = next_float_from_double(min_val, -1, 2);
+                            max_corner[dim] = next_float_from_double(max_val, 1, 2);
+                          }
+                          return {min_corner, max_corner};
+                        });
+    }
+    device_geometries.mbrs_ = std::move(geoms_.mbrs);
     device_geometries.type_ = geometry_type_;
     device_geometries.points_ = std::move(geoms_.vertices);
-    device_geometries.mbrs_ = std::move(geoms_.mbrs);
+
     // move type specific data
     switch (geometry_type_) {
       case GeometryType::kPoint: {
@@ -635,6 +636,7 @@ class ParallelWkbLoader {
         break;
       }
     }
+    Clear(stream);
     return std::move(device_geometries);
   }
 
@@ -646,13 +648,9 @@ class ParallelWkbLoader {
 
   void updateGeometryType(int64_t offset, int64_t length) {
     if (geometry_type_ == GeometryType::kGeometryCollection) {
-      // already the most generic type
+      // it's already the most generic type
       return;
     }
-
-    GeoArrowWKBReader reader;
-    GeoArrowError error;
-    GEOARROW_THROW_NOT_OK(nullptr, GeoArrowWKBReaderInit(&reader));
 
     std::vector<bool> type_flags(8 /*WKB types*/, false);
     std::vector<std::thread> workers;
@@ -662,6 +660,9 @@ class ParallelWkbLoader {
       auto run = [&](int tid) {
         auto thread_work_start = tid * thread_work_size;
         auto thread_work_end = std::min(length, thread_work_start + thread_work_size);
+        GeoArrowWKBReader reader;
+        GeoArrowError error;
+        GEOARROW_THROW_NOT_OK(nullptr, GeoArrowWKBReaderInit(&reader));
 
         for (uint32_t work_offset = thread_work_start; work_offset < thread_work_end;
              work_offset++) {
@@ -680,6 +681,10 @@ class ParallelWkbLoader {
           NANOARROW_THROW_NOT_OK(detail::WKBReaderReadEndian(s, &error));
           uint32_t geometry_type;
           NANOARROW_THROW_NOT_OK(detail::WKBReaderReadUInt32(s, &geometry_type, &error));
+          if (geometry_type >= type_flags.size()) {
+            printf("Geom type %u at row %ld\n", geometry_type, (long)arrow_offset);
+          }
+          assert(geometry_type < type_flags.size());
           type_flags[geometry_type] = true;
         }
       };

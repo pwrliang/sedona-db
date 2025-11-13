@@ -133,7 +133,7 @@ OptixTraversableHandle RTEngine::BuildAccelCustom(cudaStream_t cuda_stream,
   OPTIX_CHECK(optixAccelComputeMemoryUsage(optix_context_, &accelOptions, &build_input, 1,
                                            &blas_buffer_sizes));
 
-  printf("estimated BVS size %lu MB\n", blas_buffer_sizes.tempSizeInBytes / 1024 / 1024);
+  // printf("estimated BVS size %lu MB\n", blas_buffer_sizes.tempSizeInBytes / 1024 / 1024);
 
   rmm::device_buffer temp_buf(blas_buffer_sizes.tempSizeInBytes, cuda_stream);
   out_buf.resize(blas_buffer_sizes.outputSizeInBytes, cuda_stream);
