@@ -2,6 +2,7 @@
 
 #include <thrust/pair.h>
 #include "gpuspatial/geom/box.cuh"
+#include "gpuspatial/geom/multi_point.cuh"
 #include "gpuspatial/geom/multi_polygon.cuh"
 #include "gpuspatial/geom/point.cuh"
 #include "gpuspatial/geom/polygon.cuh"
@@ -17,9 +18,9 @@ struct LaunchParamsPointQuery {
   using box_t = Box<Point<float, POINT_T::n_dim>>;
   // Data structures of geometries1
   bool grouped;
-  ArrayView<uint32_t> prefix_sum; // Only used when grouped
+  ArrayView<uint32_t> prefix_sum;         // Only used when grouped
   ArrayView<uint32_t> reordered_indices;  // Only used when grouped
-  ArrayView<box_t> mbrs1; // MBR of each feature in geometries1
+  ArrayView<box_t> mbrs1;                 // MBR of each feature in geometries1
   OptixTraversableHandle handle;
   //  Data structures of geometries2
   ArrayView<POINT_T> points2;
@@ -39,26 +40,36 @@ struct LaunchParamsBoxQuery {
   QueueView<thrust::pair<uint32_t, uint32_t>> ids;
 };
 
+/**
+ * This query is compatible with both MultiPoint-MultiPolygon and Point-MultiPolygon
+ */
 template <typename POINT_T, typename INDEX_T>
 struct LaunchParamsPolygonPointQuery {
   using point_t = POINT_T;
   using index_t = INDEX_T;
-  PolygonArrayView<point_t, index_t> polygons;
+  // Either MultiPointArrayView or PointArrayView will be used
+  MultiPointArrayView<point_t, index_t> multi_points;
   PointArrayView<point_t, index_t> points;
+  PolygonArrayView<point_t, index_t> polygons;
   ArrayView<index_t> polygon_ids;  // sorted
   ArrayView<thrust::pair<index_t, index_t>> ids;
   ArrayView<index_t> seg_begins;
-  ArrayView<PointLocation> locations;
+  ArrayView<int> IMs;  // intersection matrices
   OptixTraversableHandle handle;
   ArrayView<index_t> aabb_poly_ids, aabb_ring_ids;
 };
 
+/**
+ * This query is compatible with both MultiPoint-MultiPolygon and Point-MultiPolygon
+ */
 template <typename POINT_T, typename INDEX_T>
-struct LaunchParamsMultiPolygonPointQuery {
+struct LaunchParamsPointMultiPolygonQuery {
   using point_t = POINT_T;
   using index_t = INDEX_T;
   using scalar_t = typename POINT_T::scalar_t;
   MultiPolygonArrayView<point_t, index_t> multi_polygons;
+  // Either MultiPointArrayView or PointArrayView will be used
+  MultiPointArrayView<point_t, index_t> multi_points;
   PointArrayView<point_t, index_t> points;
   ArrayView<index_t> multi_polygon_ids;  // sorted
   ArrayView<thrust::pair<index_t, index_t>> ids;

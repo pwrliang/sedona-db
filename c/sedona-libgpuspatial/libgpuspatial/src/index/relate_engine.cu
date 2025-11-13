@@ -127,6 +127,7 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
     const rmm::cuda_stream_view& stream, const GEOM2_ARRAY_VIEW_T& geom_array2,
     Predicate predicate, Queue<thrust::pair<uint32_t, uint32_t>>& ids) {
   switch (geoms1_->get_geometry_type()) {
+
     case GeometryType::kPoint: {
       using geom1_array_view_t = PointArrayView<POINT_T, INDEX_T>;
       Evaluate(stream, geoms1_->template GetGeometryArrayView<geom1_array_view_t>(),
@@ -194,34 +195,154 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
 template <typename POINT_T, typename INDEX_T>
 void RelateEngine<POINT_T, INDEX_T>::Evaluate(
     const rmm::cuda_stream_view& stream,
+    const PointArrayView<POINT_T, INDEX_T>& geom_array1,
+    const PolygonArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
+    Queue<thrust::pair<uint32_t, uint32_t>>& ids) {
+  EvaluateImpl(stream, geom_array1, MultiPointArrayView<POINT_T, INDEX_T>(), geom_array2,
+               predicate, ids, false /*inverse IM*/);
+}
+
+template <typename POINT_T, typename INDEX_T>
+void RelateEngine<POINT_T, INDEX_T>::Evaluate(
+    const rmm::cuda_stream_view& stream,
+    const MultiPointArrayView<POINT_T, INDEX_T>& geom_array1,
+    const PolygonArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
+    Queue<thrust::pair<uint32_t, uint32_t>>& ids) {
+  EvaluateImpl(stream, PointArrayView<POINT_T, INDEX_T>(), geom_array1, geom_array2,
+               predicate, ids, false /*inverse IM*/);
+}
+
+template <typename POINT_T, typename INDEX_T>
+void RelateEngine<POINT_T, INDEX_T>::Evaluate(
+    const rmm::cuda_stream_view& stream,
     const PolygonArrayView<POINT_T, INDEX_T>& geom_array1,
     const PointArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
+    Queue<thrust::pair<uint32_t, uint32_t>>& ids) {
+  thrust::for_each(rmm::exec_policy_nosync(stream), ids.data(),
+                   ids.data() + ids.size(stream),
+                   [] __device__(thrust::pair<uint32_t, uint32_t> & pair) {
+                     thrust::swap(pair.first, pair.second);
+                   });
+  EvaluateImpl(stream, geom_array2, MultiPointArrayView<POINT_T, INDEX_T>(), geom_array1,
+               predicate, ids, true /*inverse IM*/);
+  thrust::for_each(rmm::exec_policy_nosync(stream), ids.data(),
+                   ids.data() + ids.size(stream),
+                   [] __device__(thrust::pair<uint32_t, uint32_t> & pair) {
+                     thrust::swap(pair.first, pair.second);
+                   });
+}
+
+template <typename POINT_T, typename INDEX_T>
+void RelateEngine<POINT_T, INDEX_T>::Evaluate(
+    const rmm::cuda_stream_view& stream,
+    const PolygonArrayView<POINT_T, INDEX_T>& geom_array1,
+    const MultiPointArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
+    Queue<thrust::pair<uint32_t, uint32_t>>& ids) {
+  thrust::for_each(rmm::exec_policy_nosync(stream), ids.data(),
+                   ids.data() + ids.size(stream),
+                   [] __device__(thrust::pair<uint32_t, uint32_t> & pair) {
+                     thrust::swap(pair.first, pair.second);
+                   });
+  EvaluateImpl(stream, PointArrayView<POINT_T, INDEX_T>(), geom_array2, geom_array1,
+               predicate, ids, true /*inverse IM*/);
+  thrust::for_each(rmm::exec_policy_nosync(stream), ids.data(),
+                   ids.data() + ids.size(stream),
+                   [] __device__(thrust::pair<uint32_t, uint32_t> & pair) {
+                     thrust::swap(pair.first, pair.second);
+                   });
+}
+
+template <typename POINT_T, typename INDEX_T>
+void RelateEngine<POINT_T, INDEX_T>::Evaluate(
+    const rmm::cuda_stream_view& stream,
+    const PointArrayView<POINT_T, INDEX_T>& geom_array1,
+    const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
+    Queue<thrust::pair<uint32_t, uint32_t>>& ids) {
+  EvaluateImpl(stream, geom_array1, MultiPointArrayView<POINT_T, INDEX_T>(), geom_array2,
+               predicate, ids, false /*inverse IM*/);
+}
+
+template <typename POINT_T, typename INDEX_T>
+void RelateEngine<POINT_T, INDEX_T>::Evaluate(
+    const rmm::cuda_stream_view& stream,
+    const MultiPointArrayView<POINT_T, INDEX_T>& geom_array1,
+    const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
+    Queue<thrust::pair<uint32_t, uint32_t>>& ids) {
+  EvaluateImpl(stream, PointArrayView<POINT_T, INDEX_T>(), geom_array1, geom_array2,
+               predicate, ids, false /*inverse IM*/);
+}
+
+template <typename POINT_T, typename INDEX_T>
+void RelateEngine<POINT_T, INDEX_T>::Evaluate(
+    const rmm::cuda_stream_view& stream,
+    const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array1,
+    const PointArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
+    Queue<thrust::pair<uint32_t, uint32_t>>& ids) {
+  thrust::for_each(rmm::exec_policy_nosync(stream), ids.data(),
+                   ids.data() + ids.size(stream),
+                   [] __device__(thrust::pair<uint32_t, uint32_t> & pair) {
+                     thrust::swap(pair.first, pair.second);
+                   });
+  EvaluateImpl(stream, geom_array2, MultiPointArrayView<POINT_T, INDEX_T>(), geom_array1,
+               predicate, ids, true /*inverse IM*/);
+  thrust::for_each(rmm::exec_policy_nosync(stream), ids.data(),
+                   ids.data() + ids.size(stream),
+                   [] __device__(thrust::pair<uint32_t, uint32_t> & pair) {
+                     thrust::swap(pair.first, pair.second);
+                   });
+}
+
+template <typename POINT_T, typename INDEX_T>
+void RelateEngine<POINT_T, INDEX_T>::Evaluate(
+    const rmm::cuda_stream_view& stream,
+    const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array1,
+    const MultiPointArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
+    Queue<thrust::pair<uint32_t, uint32_t>>& ids) {
+  thrust::for_each(rmm::exec_policy_nosync(stream), ids.data(),
+                   ids.data() + ids.size(stream),
+                   [] __device__(thrust::pair<uint32_t, uint32_t> & pair) {
+                     thrust::swap(pair.first, pair.second);
+                   });
+  EvaluateImpl(stream, PointArrayView<POINT_T, INDEX_T>(), geom_array2, geom_array1,
+               predicate, ids, true /*inverse IM*/);
+  thrust::for_each(rmm::exec_policy_nosync(stream), ids.data(),
+                   ids.data() + ids.size(stream),
+                   [] __device__(thrust::pair<uint32_t, uint32_t> & pair) {
+                     thrust::swap(pair.first, pair.second);
+                   });
+}
+
+template <typename POINT_T, typename INDEX_T>
+void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
+    const rmm::cuda_stream_view& stream,
+    const PointArrayView<POINT_T, INDEX_T>& point_array,
+    const MultiPointArrayView<POINT_T, INDEX_T>& multi_point_array,
+    const PolygonArrayView<POINT_T, INDEX_T>& poly_array, Predicate predicate,
     Queue<thrust::pair<uint32_t, uint32_t>>& ids, bool inverse) {
-  printf("Use overload, inverse = %d\n", inverse);
   auto ids_size = ids.size(stream);
 
   if (ids_size == 0) {
     return;
   }
-  // Sort by polygon id
+  // pair.first is point id; pair.second is polygon id
+  // Sort by multi polygon id
   thrust::sort(rmm::exec_policy_nosync(stream), ids.data(), ids.data() + ids_size,
                [] __device__(const thrust::pair<uint32_t, uint32_t>& pair1,
                              const thrust::pair<uint32_t, uint32_t>& pair2) {
-                 return pair1.first < pair2.first;
+                 return pair1.second < pair2.second;
                });
 
-  rmm::device_uvector<uint32_t> geom1_ids(ids_size, stream);
+  rmm::device_uvector<uint32_t> poly_ids(ids_size, stream);
 
   thrust::transform(
-      rmm::exec_policy_nosync(stream), ids.data(), ids.data() + ids_size,
-      geom1_ids.data(),
+      rmm::exec_policy_nosync(stream), ids.data(), ids.data() + ids_size, poly_ids.data(),
       [] __device__(const thrust::pair<uint32_t, uint32_t>& pair) { return pair.first; });
-  auto geom1_ids_end =
-      thrust::unique(rmm::exec_policy_nosync(stream), geom1_ids.begin(), geom1_ids.end());
-  geom1_ids.resize(thrust::distance(geom1_ids.begin(), geom1_ids_end), stream);
-  geom1_ids.shrink_to_fit(stream);
+  auto poly_ids_end =
+      thrust::unique(rmm::exec_policy_nosync(stream), poly_ids.begin(), poly_ids.end());
+  poly_ids.resize(thrust::distance(poly_ids.begin(), poly_ids_end), stream);
+  poly_ids.shrink_to_fit(stream);
 
-  auto bvh_bytes = EstimateBVHSize(stream, geom_array1, ArrayView<uint32_t>(geom1_ids));
+  auto bvh_bytes = EstimateBVHSize(stream, poly_array, ArrayView<uint32_t>(poly_ids));
   auto avail_bytes = rmm::available_device_memory().first * config_.memory_quota;
   int n_batches = bvh_bytes / avail_bytes + 1;
   auto batch_size = (ids_size + n_batches - 1) / n_batches;
@@ -233,40 +354,42 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
     auto ids_end = std::min(ids_begin + batch_size, ids_size);
     auto ids_size_batch = ids_end - ids_begin;
 
-    geom1_ids.resize(ids_size_batch, stream);
+    poly_ids.resize(ids_size_batch, stream);
     thrust::transform(rmm::exec_policy_nosync(stream), ids.data() + ids_begin,
-                      ids.data() + ids_end, geom1_ids.data(),
+                      ids.data() + ids_end, poly_ids.data(),
                       [] __device__(const thrust::pair<uint32_t, uint32_t>& pair) {
-                        return pair.first;
+                        return pair.second;
                       });
 
     // ids is sorted
-    geom1_ids_end = thrust::unique(rmm::exec_policy_nosync(stream), geom1_ids.begin(),
-                                   geom1_ids.end());
+    poly_ids_end =
+        thrust::unique(rmm::exec_policy_nosync(stream), poly_ids.begin(), poly_ids.end());
 
-    geom1_ids.resize(thrust::distance(geom1_ids.begin(), geom1_ids_end), stream);
-    geom1_ids.shrink_to_fit(stream);
+    poly_ids.resize(thrust::distance(poly_ids.begin(), poly_ids_end), stream);
+    poly_ids.shrink_to_fit(stream);
 
+    rmm::device_uvector<int> IMs(ids_size_batch, stream);
     rmm::device_uvector<INDEX_T> seg_begins(0, stream);
     rmm::device_uvector<PointLocation> locations(ids_size_batch, stream);
     rmm::device_buffer bvh_buffer(0, stream);
     rmm::device_uvector<INDEX_T> aabb_poly_ids(0, stream), aabb_ring_ids(0, stream);
 
     // aabb id -> vertex begin[polygon] + ith point in this polygon
-    auto handle = BuildBVH(stream, geom_array1, ArrayView<INDEX_T>(geom1_ids), seg_begins,
+    auto handle = BuildBVH(stream, poly_array, ArrayView<INDEX_T>(poly_ids), seg_begins,
                            bvh_buffer, aabb_poly_ids, aabb_ring_ids);
 
     using params_t = detail::LaunchParamsPolygonPointQuery<POINT_T, INDEX_T>;
 
     params_t params;
 
-    params.polygons = geom_array1;
-    params.points = geom_array2;
-    params.polygon_ids = ArrayView<INDEX_T>(geom1_ids);
+    params.points = point_array;
+    params.multi_points = multi_point_array;
+    params.polygons = poly_array;
+    params.polygon_ids = ArrayView<INDEX_T>(poly_ids);
     params.ids = ArrayView<thrust::pair<uint32_t, uint32_t>>(ids.data() + ids_begin,
                                                              ids_size_batch);
     params.seg_begins = ArrayView<INDEX_T>(seg_begins);
-    params.locations = ArrayView<PointLocation>(locations);
+    params.IMs = ArrayView<int>(IMs);
     params.handle = handle;
     params.aabb_poly_ids = ArrayView<INDEX_T>(aabb_poly_ids);
     params.aabb_ring_ids = ArrayView<INDEX_T>(aabb_ring_ids);
@@ -280,7 +403,7 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
         stream, GetPolygonPointQueryShaderId<POINT_T>(), dim3{ids_size_batch, 1, 1},
         ArrayView<char>((char*)params_buffer.data(), params_buffer.size()));
 
-    auto* p_locations = locations.data();
+    auto* p_IMs = IMs.data();
     auto* p_ids = ids.data();
 
     thrust::transform(rmm::exec_policy_nosync(stream),
@@ -288,12 +411,8 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
                       thrust::make_counting_iterator<uint32_t>(ids_size_batch),
                       ids.data() + ids_begin, [=] __device__(uint32_t i) {
                         const auto& pair = p_ids[ids_begin + i];
-                        auto geom1_id = pair.first;
-                        auto geom2_id = pair.second;
-                        const auto& geom1 = geom_array1[geom1_id];
-                        const auto& geom2 = geom_array2[geom2_id];
 
-                        auto IM = relate(geom1, geom2, p_locations[i]);
+                        auto IM = p_IMs[i];
                         if (inverse) {
                           IM = IM__TWIST(IM);
                         }
@@ -313,31 +432,13 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
 }
 
 template <typename POINT_T, typename INDEX_T>
-void RelateEngine<POINT_T, INDEX_T>::Evaluate(
+void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
     const rmm::cuda_stream_view& stream,
-    const PointArrayView<POINT_T, INDEX_T>& geom_array1,
-    const PolygonArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
-    Queue<thrust::pair<uint32_t, uint32_t>>& ids) {
-  // Reuse the polygon-point evaluation by swapping the order
-  thrust::for_each(rmm::exec_policy_nosync(stream), ids.data(),
-                   ids.data() + ids.size(stream),
-                   [] __device__(thrust::pair<uint32_t, uint32_t> & pair) {
-                     thrust::swap(pair.first, pair.second);
-                   });
-  Evaluate(stream, geom_array2, geom_array1, predicate, ids, true /*inverse IM*/);
-  thrust::for_each(rmm::exec_policy_nosync(stream), ids.data(),
-                   ids.data() + ids.size(stream),
-                   [] __device__(thrust::pair<uint32_t, uint32_t> & pair) {
-                     thrust::swap(pair.first, pair.second);
-                   });
-}
-
-template <typename POINT_T, typename INDEX_T>
-void RelateEngine<POINT_T, INDEX_T>::Evaluate(
-    const rmm::cuda_stream_view& stream,
-    const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array1,
-    const PointArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
+    const PointArrayView<POINT_T, INDEX_T>& point_array,
+    const MultiPointArrayView<POINT_T, INDEX_T>& multi_point_array,
+    const MultiPolygonArrayView<POINT_T, INDEX_T>& multi_poly_array, Predicate predicate,
     Queue<thrust::pair<uint32_t, uint32_t>>& ids, bool inverse) {
+  assert(point_array.empty() || multi_point_array.empty());
   Stopwatch sw;
   sw.start();
   auto ids_size = ids.size(stream);
@@ -345,25 +446,29 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
   if (ids_size == 0) {
     return;
   }
+  // pair.first is point id; pair.second is multi polygon id
   // Sort by multi polygon id
   thrust::sort(rmm::exec_policy_nosync(stream), ids.data(), ids.data() + ids_size,
                [] __device__(const thrust::pair<uint32_t, uint32_t>& pair1,
                              const thrust::pair<uint32_t, uint32_t>& pair2) {
-                 return pair1.first < pair2.first;
+                 return pair1.second < pair2.second;
                });
 
-  rmm::device_uvector<uint32_t> geom1_ids(ids_size, stream);
+  rmm::device_uvector<uint32_t> multi_poly_ids(ids_size, stream);
 
-  thrust::transform(
-      rmm::exec_policy_nosync(stream), ids.data(), ids.data() + ids_size,
-      geom1_ids.data(),
-      [] __device__(const thrust::pair<uint32_t, uint32_t>& pair) { return pair.first; });
-  auto geom1_ids_end =
-      thrust::unique(rmm::exec_policy_nosync(stream), geom1_ids.begin(), geom1_ids.end());
-  geom1_ids.resize(thrust::distance(geom1_ids.begin(), geom1_ids_end), stream);
-  geom1_ids.shrink_to_fit(stream);
+  thrust::transform(rmm::exec_policy_nosync(stream), ids.data(), ids.data() + ids_size,
+                    multi_poly_ids.data(),
+                    [] __device__(const thrust::pair<uint32_t, uint32_t>& pair) {
+                      return pair.second;
+                    });
+  auto multi_poly_ids_end = thrust::unique(rmm::exec_policy_nosync(stream),
+                                           multi_poly_ids.begin(), multi_poly_ids.end());
+  multi_poly_ids.resize(thrust::distance(multi_poly_ids.begin(), multi_poly_ids_end),
+                        stream);
+  multi_poly_ids.shrink_to_fit(stream);
 
-  auto bvh_bytes = EstimateBVHSize(stream, geom_array1, ArrayView<uint32_t>(geom1_ids));
+  auto bvh_bytes =
+      EstimateBVHSize(stream, multi_poly_array, ArrayView<uint32_t>(multi_poly_ids));
   auto avail_bytes = rmm::available_device_memory().first * config_.memory_quota;
   int n_batches = bvh_bytes / avail_bytes + 1;
   auto batch_size = (ids_size + n_batches - 1) / n_batches;
@@ -375,19 +480,21 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
     auto ids_end = std::min(ids_begin + batch_size, ids_size);
     auto ids_size_batch = ids_end - ids_begin;
 
-    geom1_ids.resize(ids_size_batch, stream);
+    // Extract multi polygon IDs in this batch
+    multi_poly_ids.resize(ids_size_batch, stream);
 
     thrust::transform(rmm::exec_policy_nosync(stream), ids.data() + ids_begin,
-                      ids.data() + ids_end, geom1_ids.data(),
+                      ids.data() + ids_end, multi_poly_ids.data(),
                       [] __device__(const thrust::pair<uint32_t, uint32_t>& pair) {
-                        return pair.first;
+                        return pair.second;
                       });
 
-    // ids is sorted
-    geom1_ids_end = thrust::unique(rmm::exec_policy_nosync(stream), geom1_ids.begin(),
-                                   geom1_ids.end());
-    geom1_ids.resize(thrust::distance(geom1_ids.begin(), geom1_ids_end), stream);
-    geom1_ids.shrink_to_fit(stream);
+    // multi polygon ids have been sorted before
+    multi_poly_ids_end = thrust::unique(rmm::exec_policy_nosync(stream),
+                                        multi_poly_ids.begin(), multi_poly_ids.end());
+    multi_poly_ids.resize(thrust::distance(multi_poly_ids.begin(), multi_poly_ids_end),
+                          stream);
+    multi_poly_ids.shrink_to_fit(stream);
 
     rmm::device_uvector<int> IMs(ids_size_batch, stream);
     rmm::device_uvector<INDEX_T> seg_begins(0, stream);
@@ -396,11 +503,11 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
     rmm::device_uvector<INDEX_T> aabb_multi_poly_ids(0, stream), aabb_part_ids(0, stream),
         aabb_ring_ids(0, stream);
 
-    auto handle = BuildBVH(stream, geom_array1, ArrayView<INDEX_T>(geom1_ids), seg_begins,
-                           uniq_part_begins, bvh_buffer, aabb_multi_poly_ids,
+    auto handle = BuildBVH(stream, multi_poly_array, ArrayView<INDEX_T>(multi_poly_ids),
+                           seg_begins, uniq_part_begins, bvh_buffer, aabb_multi_poly_ids,
                            aabb_part_ids, aabb_ring_ids);
 
-    using params_t = detail::LaunchParamsMultiPolygonPointQuery<POINT_T, INDEX_T>;
+    using params_t = detail::LaunchParamsPointMultiPolygonQuery<POINT_T, INDEX_T>;
 
     stream.synchronize();
     sw.stop();
@@ -409,9 +516,10 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
 
     params_t params;
 
-    params.multi_polygons = geom_array1;
-    params.points = geom_array2;
-    params.multi_polygon_ids = ArrayView<INDEX_T>(geom1_ids);
+    params.points = point_array;
+    params.multi_points = multi_point_array;
+    params.multi_polygons = multi_poly_array;
+    params.multi_polygon_ids = ArrayView<INDEX_T>(multi_poly_ids);
     params.ids = ArrayView<thrust::pair<uint32_t, uint32_t>>(ids.data() + ids_begin,
                                                              ids_size_batch);
     params.seg_begins = ArrayView<INDEX_T>(seg_begins);
@@ -445,10 +553,6 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
                       thrust::make_counting_iterator<uint32_t>(ids_size_batch),
                       ids.data() + ids_begin, [=] __device__(uint32_t i) {
                         const auto& pair = p_ids[ids_begin + i];
-                        auto geom1_id = pair.first;
-                        auto geom2_id = pair.second;
-                        const auto& geom1 = geom_array1[geom1_id];
-                        const auto& geom2 = geom_array2[geom2_id];
 
                         auto IM = p_IMs[i];
                         if (inverse) {
@@ -471,55 +575,7 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
 
   // Debug: Find max indices to detect out-of-range values
   auto result_size = end - ids.data();
-  if (result_size > 0) {
-    auto max_build =
-        thrust::max_element(rmm::exec_policy_nosync(stream), ids.data(), end,
-                            [] __device__(const thrust::pair<uint32_t, uint32_t>& a,
-                                          const thrust::pair<uint32_t, uint32_t>& b) {
-                              return a.first < b.first;
-                            });
-    auto max_stream =
-        thrust::max_element(rmm::exec_policy_nosync(stream), ids.data(), end,
-                            [] __device__(const thrust::pair<uint32_t, uint32_t>& a,
-                                          const thrust::pair<uint32_t, uint32_t>& b) {
-                              return a.second < b.second;
-                            });
-    auto max_build_val = thrust::make_pair(0u, 0u);
-    auto max_stream_val = thrust::make_pair(0u, 0u);
-    CUDA_CHECK(cudaMemcpyAsync(&max_build_val, max_build,
-                               sizeof(thrust::pair<uint32_t, uint32_t>),
-                               cudaMemcpyDeviceToHost, stream.value()));
-    CUDA_CHECK(cudaMemcpyAsync(&max_stream_val, max_stream,
-                               sizeof(thrust::pair<uint32_t, uint32_t>),
-                               cudaMemcpyDeviceToHost, stream.value()));
-    stream.synchronize();
-    printf(
-        "Result size %u, max build_idx=%u, max stream_idx=%u, geom_array1.size=%lu, geom_array2.size=%lu\n",
-        result_size, max_build_val.first, max_stream_val.second, geom_array1.size(),
-        geom_array2.size());
-  } else {
-    printf("Result size %u\n", result_size);
-  }
-}
-
-template <typename POINT_T, typename INDEX_T>
-void RelateEngine<POINT_T, INDEX_T>::Evaluate(
-    const rmm::cuda_stream_view& stream,
-    const PointArrayView<POINT_T, INDEX_T>& geom_array1,
-    const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
-    Queue<thrust::pair<uint32_t, uint32_t>>& ids) {
-  // Reuse the polygon-point evaluation by swapping the order
-  thrust::for_each(rmm::exec_policy_nosync(stream), ids.data(),
-                   ids.data() + ids.size(stream),
-                   [] __device__(thrust::pair<uint32_t, uint32_t> & pair) {
-                     thrust::swap(pair.first, pair.second);
-                   });
-  Evaluate(stream, geom_array2, geom_array1, predicate, ids, true /*inverse IM*/);
-  thrust::for_each(rmm::exec_policy_nosync(stream), ids.data(),
-                   ids.data() + ids.size(stream),
-                   [] __device__(thrust::pair<uint32_t, uint32_t> & pair) {
-                     thrust::swap(pair.first, pair.second);
-                   });
+  printf("Result size %u\n", result_size);
 }
 
 template <typename POINT_T, typename INDEX_T>

@@ -67,6 +67,8 @@ class MultiLineStringArrayView {
     return prefix_sum_geoms_.empty() ? 0 : prefix_sum_geoms_.size() - 1;
   }
 
+  DEV_HOST_INLINE bool empty() const { return size() == 0; }
+
   DEV_HOST_INLINE MultiLineString<POINT_T, INDEX_T> operator[](size_t i) {
     auto begin = prefix_sum_geoms_[i];
     auto end = prefix_sum_geoms_[i + 1];

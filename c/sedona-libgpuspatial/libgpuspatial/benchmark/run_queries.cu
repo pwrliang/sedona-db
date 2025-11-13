@@ -17,7 +17,6 @@
 #include "parquet/arrow/reader.h"
 
 #include "run_queries.cuh"
-#include "thread_pool.h"
 
 #include <rmm/mr/device/binning_memory_resource.hpp>
 #include <rmm/mr/device/cuda_async_memory_resource.hpp>

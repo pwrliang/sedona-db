@@ -319,7 +319,7 @@ TEST(JoinerTest, PIPInverse) {
     array_index_offset += stream_array->length;
   }
 }
-#if 0
+
 TEST(JoinerTest, PolygonPolygonContains) {
   SpatialJoiner::SpatialJoinerConfig config;
   std::string ptx_root = TestUtils::GetTestDataPath("shaders_ptx");
@@ -452,6 +452,5 @@ TEST(JoinerTest, PolygonPolygonContains) {
     array_index_offset += stream_array->length;
   }
 }
-#endif
 
 }  // namespace gpuspatial

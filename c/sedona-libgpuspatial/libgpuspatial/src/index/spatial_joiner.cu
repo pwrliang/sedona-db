@@ -359,7 +359,6 @@ void SpatialJoiner::filter(SpatialJoinerContext* ctx, uint32_t dim_x, bool swap_
   }
   auto result_size = ctx->results.size(ctx->cuda_stream);
   sw.stop();
-
   if (swap_id && result_size > 0) {
     // swap the pair (build_id, stream_id) to (stream_id, build_id)
     thrust::for_each(rmm::exec_policy_nosync(ctx->cuda_stream), ctx->results.data(),
@@ -393,10 +392,6 @@ void SpatialJoiner::refine(SpatialJoinerContext* ctx, Predicate predicate,
 #endif
   rmm::device_uvector<uint32_t> tmp_result_buffer(n_results, ctx->cuda_stream);
 
-  // printf(
-  // "DEBUG refine(): prev build_indices size=%lu, n_results=%u, array_index_offset=%u\n",
-  // prev_size, n_results, ctx->array_index_offset);
-
   thrust::transform(
       rmm::exec_policy_nosync(ctx->cuda_stream), ctx->results.data(),
       ctx->results.data() + n_results, tmp_result_buffer.begin(),
@@ -420,8 +415,6 @@ void SpatialJoiner::refine(SpatialJoinerContext* ctx, Predicate predicate,
       });
 
   stream_indices->resize(stream_indices->size() + n_results);
-  // printf("DEBUG refine(): final build_indices size=%lu, stream_indices size=%lu\n",
-  // build_indices->size(), stream_indices->size());
 
   CUDA_CHECK(cudaMemcpyAsync(stream_indices->data() + prev_size, tmp_result_buffer.data(),
                              sizeof(uint32_t) * n_results, cudaMemcpyDeviceToHost,

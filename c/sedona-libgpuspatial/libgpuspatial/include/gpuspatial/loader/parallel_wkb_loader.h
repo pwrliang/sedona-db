@@ -373,7 +373,6 @@ struct HostParsedGeometries {
         mbr->Expand(point.as_float());
       }
     }
-
     return node + 1;
   }
 };

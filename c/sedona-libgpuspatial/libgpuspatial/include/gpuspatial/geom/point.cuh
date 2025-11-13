@@ -217,6 +217,8 @@ class PointArrayView {
 
   DEV_HOST_INLINE INDEX_T size() const { return points_.size(); }
 
+  DEV_HOST_INLINE bool empty() const { return size() == 0; }
+
   DEV_HOST_INLINE POINT_T& operator[](INDEX_T i) { return points_[i]; }
 
   DEV_HOST_INLINE const POINT_T& operator[](INDEX_T i) const { return points_[i]; }

@@ -435,6 +435,8 @@ class PolygonArrayView {
     return prefix_sum_polygons_.empty() ? 0 : prefix_sum_polygons_.size() - 1;
   }
 
+  DEV_HOST_INLINE bool empty() const { return size() == 0; }
+
   DEV_HOST_INLINE Polygon<point_t, index_t> operator[](size_t i) {
     auto ring_begin = prefix_sum_polygons_[i];
     auto ring_end = prefix_sum_polygons_[i + 1];

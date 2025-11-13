@@ -46,24 +46,58 @@ class RelateEngine {
 
   // These are the specific overloads for RT-accelerated PIP queries
   void Evaluate(const rmm::cuda_stream_view& stream,
-                const PolygonArrayView<POINT_T, INDEX_T>& geom_array1,
-                const PointArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
-                Queue<thrust::pair<uint32_t, uint32_t>>& ids, bool inverse = false);
-
-  void Evaluate(const rmm::cuda_stream_view& stream,
                 const PointArrayView<POINT_T, INDEX_T>& geom_array1,
                 const PolygonArrayView<POINT_T, INDEX_T>& geom_array2,
                 Predicate predicate, Queue<thrust::pair<uint32_t, uint32_t>>& ids);
 
   void Evaluate(const rmm::cuda_stream_view& stream,
-                const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array1,
+                const MultiPointArrayView<POINT_T, INDEX_T>& geom_array1,
+                const PolygonArrayView<POINT_T, INDEX_T>& geom_array2,
+                Predicate predicate, Queue<thrust::pair<uint32_t, uint32_t>>& ids);
+
+  void Evaluate(const rmm::cuda_stream_view& stream,
+                const PolygonArrayView<POINT_T, INDEX_T>& geom_array1,
                 const PointArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
-                Queue<thrust::pair<uint32_t, uint32_t>>& ids, bool inverse = false);
+                Queue<thrust::pair<uint32_t, uint32_t>>& ids);
+
+  void Evaluate(const rmm::cuda_stream_view& stream,
+                const PolygonArrayView<POINT_T, INDEX_T>& geom_array1,
+                const MultiPointArrayView<POINT_T, INDEX_T>& geom_array2,
+                Predicate predicate, Queue<thrust::pair<uint32_t, uint32_t>>& ids);
 
   void Evaluate(const rmm::cuda_stream_view& stream,
                 const PointArrayView<POINT_T, INDEX_T>& geom_array1,
                 const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array2,
                 Predicate predicate, Queue<thrust::pair<uint32_t, uint32_t>>& ids);
+
+  void Evaluate(const rmm::cuda_stream_view& stream,
+                const MultiPointArrayView<POINT_T, INDEX_T>& geom_array1,
+                const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array2,
+                Predicate predicate, Queue<thrust::pair<uint32_t, uint32_t>>& ids);
+
+  void Evaluate(const rmm::cuda_stream_view& stream,
+                const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array1,
+                const PointArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
+                Queue<thrust::pair<uint32_t, uint32_t>>& ids);
+
+  void Evaluate(const rmm::cuda_stream_view& stream,
+                const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array1,
+                const MultiPointArrayView<POINT_T, INDEX_T>& geom_array2,
+                Predicate predicate, Queue<thrust::pair<uint32_t, uint32_t>>& ids);
+
+  void EvaluateImpl(const rmm::cuda_stream_view& stream,
+                    const PointArrayView<POINT_T, INDEX_T>& point_array,
+                    const MultiPointArrayView<POINT_T, INDEX_T>& multi_point_array,
+                    const PolygonArrayView<POINT_T, INDEX_T>& poly_array,
+                    Predicate predicate, Queue<thrust::pair<uint32_t, uint32_t>>& ids,
+                    bool inverse = false);
+
+  void EvaluateImpl(const rmm::cuda_stream_view& stream,
+                    const PointArrayView<POINT_T, INDEX_T>& point_array,
+                    const MultiPointArrayView<POINT_T, INDEX_T>& multi_point_array,
+                    const MultiPolygonArrayView<POINT_T, INDEX_T>& multi_poly_array,
+                    Predicate predicate, Queue<thrust::pair<uint32_t, uint32_t>>& ids,
+                    bool inverse);
 
   /**
    * Build BVH for a subset of polygons

@@ -38,6 +38,7 @@ extern "C" __global__ void __intersection__gpuspatial() {
     assert(!mbrs1.empty());
     auto geom1_id = aabb_id;
     const auto& mbr1 = mbrs1[geom1_id];
+
     if (mbr1.covers(point.as_float())) {
       params.ids.Append(thrust::make_pair(geom1_id, geom2_id));
     }

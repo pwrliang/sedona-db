@@ -161,6 +161,8 @@ class GeometryCollectionArrayView {
     return ps_num_geoms_.empty() ? 0 : ps_num_geoms_.size() - 1;
   }
 
+  DEV_HOST_INLINE bool empty() const { return size() == 0; }
+
   DEV_HOST_INLINE GeometryCollection<point_t, INDEX_T> operator[](size_t i) {
     auto geom_begin = ps_num_geoms_[i];
     auto geom_end = ps_num_geoms_[i + 1];

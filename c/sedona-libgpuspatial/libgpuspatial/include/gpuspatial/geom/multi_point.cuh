@@ -54,6 +54,9 @@ class MultiPointArrayView {
   DEV_HOST_INLINE size_t size() const {
     return prefix_sum_.empty() ? 0 : prefix_sum_.size() - 1;
   }
+
+  DEV_HOST_INLINE bool empty() const { return size() == 0; }
+
   DEV_HOST_INLINE MultiPoint<POINT_T> operator[](size_t i) {
     auto begin = prefix_sum_[i];
     auto end = prefix_sum_[i + 1];
