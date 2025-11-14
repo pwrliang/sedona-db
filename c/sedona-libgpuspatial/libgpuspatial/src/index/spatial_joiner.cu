@@ -8,6 +8,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+
 #define OPTIX_MAX_RAYS (1lu << 30)
 namespace gpuspatial {
 
@@ -36,8 +37,10 @@ static rmm::device_uvector<OptixAabb> ComputeAABBs(
 
 void SpatialJoiner::Init(const Config* config) {
   config_ = *dynamic_cast<const SpatialJoinerConfig*>(config);
+
   details::RTConfig rt_config = details::get_default_rt_config(config_.ptx_root);
   rt_engine_.Init(rt_config);
+
   loader_t::Config loader_config;
   loader_config.spilling_temp_data = config_.spilling_temp_data;
 

@@ -17,9 +17,19 @@ option(GPUSPATIAL_BUILD_TESTS "Build tests" OFF)
 option(GPUSPATIAL_BUILD_BENCHMARK "Build benchmarks" OFF)
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 
-include(cmake/configure_build_type.cmake)
+include(cmake/rapids_config.cmake)
+
+include(rapids-cmake)
+include(rapids-cpm)
+include(rapids-export)
+include(rapids-find)
+
+rapids_cmake_build_type(Release)
+#include(cmake/configure_build_type.cmake)
 # Provides standard installation directory variables (e.g., CMAKE_INSTALL_LIBDIR)
 include(GNUInstallDirs)
+
+
 
 # =============================================================================
 # Fetch Dependencies
@@ -47,15 +57,16 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(geoarrow)
 
-FetchContent_Declare(
-        rmm
-        URL https://github.com/rapidsai/rmm/archive/refs/tags/v25.06.00.zip
-        URL_HASH SHA256=a79cb3c396dfa1084584ce5f8bf2ae3e4e450f42d4c0c8046e36625a721e1c8b
-        DOWNLOAD_EXTRACT_TIMESTAMP false
-        SOURCE_SUBDIR cpp
-        OVERRIDE_FIND_PACKAGE
-)
-FetchContent_MakeAvailable(rmm)
+
+#FetchContent_Declare(
+#        rmm
+#        URL https://github.com/rapidsai/rmm/archive/refs/tags/v25.06.00.zip
+#        URL_HASH SHA256=a79cb3c396dfa1084584ce5f8bf2ae3e4e450f42d4c0c8046e36625a721e1c8b
+#        DOWNLOAD_EXTRACT_TIMESTAMP false
+#        SOURCE_SUBDIR cpp
+#        OVERRIDE_FIND_PACKAGE
+#)
+#FetchContent_MakeAvailable(rmm)
 
 FetchContent_Declare(
         OptiX
@@ -71,10 +82,22 @@ target_include_directories(OptiX INTERFACE
         $<BUILD_INTERFACE:${optix_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include> # Corresponds to <prefix>/include
 )
+
+# rapids dependencies
+rapids_cpm_init()
+#include(${rapids-cmake-dir}/cpm/rapids_logger.cmake)
+#rapids_cpm_rapids_logger(BUILD_EXPORT_SET cudf-exports INSTALL_EXPORT_SET cudf-exports)
+#create_logger_macros(CUDF "cudf::default_logger()" include/cudf)
+
+include(cmake/get_rmm.cmake)
+
 # =============================================================================
 # Target Definition (gpuspatial)
 # =============================================================================
 find_package(CUDAToolkit REQUIRED)
+
+#find_package(spdlog CONFIG REQUIRED)
+#find_package(fmt CONFIG REQUIRED)
 
 include(src/index/shaders/config_shaders.cmake)
 CONFIG_SHADERS(PTX_FILES)
@@ -84,7 +107,7 @@ message("-- Config shader PTX files ${PTX_FILES}")
 add_library(gpuspatial src/index/rt_engine.cpp src/index/relate_engine.cu src/index/spatial_joiner.cu ${PTX_FILES})
 
 # Link libraries
-target_link_libraries(gpuspatial PUBLIC nanoarrow::nanoarrow geoarrow cuda rmm::rmm OptiX)
+target_link_libraries(gpuspatial PUBLIC nanoarrow::nanoarrow geoarrow cuda rmm::rmm OptiX) #  spdlog::spdlog
 
 # Set include directories
 target_include_directories(gpuspatial
