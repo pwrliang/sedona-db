@@ -24,7 +24,20 @@
 namespace {
 // OptiX log callback function
 void context_log_cb(unsigned int level, const char* tag, const char* message, void*) {
-  fprintf(stderr, "[%2d][%12s]: %s\n", (int)level, tag, message);
+  switch (level) {
+    case 1:
+      GPUSPATIAL_LOG_CRITICAL("OptiX [%s]: %s", tag, message);
+      break;
+    case 2:
+      GPUSPATIAL_LOG_ERROR("OptiX [%s]: %s", tag, message);
+      break;
+    case 3:
+      GPUSPATIAL_LOG_WARN("OptiX [%s]: %s", tag, message);
+      break;
+    case 4:
+      GPUSPATIAL_LOG_INFO("OptiX [%s]: %s", tag, message);
+      break;
+  }
 }
 }  // namespace
 
@@ -226,8 +239,10 @@ void RTEngine::initOptix(const RTConfig& config) {
 
 void RTEngine::createContext() {
   CUresult cu_res = cuCtxGetCurrent(&cuda_context_);
-  if (cu_res != CUDA_SUCCESS)
-    fprintf(stderr, "Error querying current context: error code %d\n", cu_res);
+  if (cu_res != CUDA_SUCCESS) {
+    GPUSPATIAL_LOG_CRITICAL("Error querying current context: error code %d\n", cu_res);
+    throw std::runtime_error("Error querying current context");
+  }
   OptixDeviceContextOptions options = {};
   options.logCallbackFunction = context_log_cb;
   options.logCallbackData = nullptr;
@@ -260,7 +275,7 @@ void RTEngine::createModule(const RTConfig& config) {
                                   &resources_[id].module));
 #ifndef NDEBUG
     if (sizeof_log > 1) {
-      std::cout << log << std::endl;
+      GPUSPATIAL_LOG_INFO("CreateModule %s", log);
     }
 #endif
   }
@@ -282,7 +297,7 @@ void RTEngine::createRaygenPrograms(const RTConfig& config) {
                                         &sizeof_log, &resources_[id].raygen_pg));
 #ifndef NDEBUG
     if (sizeof_log > 1) {
-      std::cout << log << std::endl;
+      GPUSPATIAL_LOG_INFO("CreateRaygenPrograms %s", log);
     }
 #endif
   }
@@ -308,7 +323,7 @@ void RTEngine::createMissPrograms(const RTConfig& config) {
                                         &sizeof_log, &resources_[id].miss_pg));
 #ifndef NDEBUG
     if (sizeof_log > 1) {
-      std::cout << log << std::endl;
+      GPUSPATIAL_LOG_INFO("CreateMissPrograms %s", log);
     }
 #endif
   }
@@ -348,7 +363,7 @@ void RTEngine::createHitgroupPrograms(const RTConfig& config) {
                                         &sizeof_log, &resources_[id].hitgroup_pg));
 #ifndef NDEBUG
     if (sizeof_log > 1) {
-      std::cout << log << std::endl;
+      GPUSPATIAL_LOG_INFO("CreateHitgroupPrograms %s", log);
     }
 #endif
   }
@@ -368,7 +383,7 @@ void RTEngine::createPipeline(const RTConfig& config) {
                                     log, &sizeof_log, &resources_[id].pipeline));
 #ifndef NDEBUG
     if (sizeof_log > 1) {
-      std::cout << log << std::endl;
+      GPUSPATIAL_LOG_INFO("CreatePipeline %s", log);
     }
 #endif
     OptixStackSizes stack_sizes = {};
@@ -446,12 +461,12 @@ size_t RTEngine::getAccelAlignedSize(size_t size) {
 std::vector<char> RTEngine::readData(const std::string& filename) {
   std::ifstream inputData(filename, std::ios::binary);
   if (inputData.fail()) {
-    std::cerr << "ERROR: readData() Failed to open file " << filename << '\n';
+    GPUSPATIAL_LOG_ERROR("readData() Failed to open file %s", filename);
     return {};
   }
   std::vector<char> data(std::istreambuf_iterator<char>(inputData), {});
   if (inputData.fail()) {
-    std::cerr << "ERROR: readData() Failed to read file " << filename << '\n';
+    GPUSPATIAL_LOG_ERROR("readData() Failed to read file %s", filename);
     return {};
   }
   return data;

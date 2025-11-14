@@ -38,7 +38,8 @@ static rmm::device_uvector<OptixAabb> ComputeAABBs(
 
 void SpatialJoiner::Init(const Config* config) {
   config_ = *dynamic_cast<const SpatialJoinerConfig*>(config);
-  GPUSPATIAL_LOG_INFO("Initialize RT engine with ptx root: %s", config_.ptx_root);
+  GPUSPATIAL_LOG_INFO("Initialize SpatialJoiner %p, Concurrency %u", this,
+                      config_.concurrency);
   details::RTConfig rt_config = details::get_default_rt_config(config_.ptx_root);
   rt_engine_.Init(rt_config);
 
@@ -55,7 +56,7 @@ void SpatialJoiner::Init(const Config* config) {
 }
 
 void SpatialJoiner::Clear() {
-  GPUSPATIAL_LOG_INFO("Clear SpatialJoiner");
+  GPUSPATIAL_LOG_INFO("Clear SpatialJoiner %p", this);
   bvh_buffer_ = nullptr;
   geometry_grouper_.Clear();
   auto stream = rmm::cuda_stream_default;
@@ -67,7 +68,8 @@ void SpatialJoiner::Clear() {
 void SpatialJoiner::PushBuild(const ArrowSchema* schema, const ArrowArray* array,
                               int64_t offset, int64_t length) {
   IntervalRangeMarker marker(array->length, "PushBuild");
-  GPUSPATIAL_LOG_INFO("PushBuild, offset %ld, length %ld", offset, length);
+  GPUSPATIAL_LOG_INFO("SpatialJoiner %p, PushBuild, offset %ld, length %ld", this, offset,
+                      length);
   build_loader_->Parse(rmm::cuda_stream_default, array, offset, length);
 }
 
@@ -77,7 +79,7 @@ void SpatialJoiner::FinishBuilding() {
 
   build_geometries_ = std::move(build_loader_->Finish(stream));
 
-  GPUSPATIAL_LOG_INFO("FinishBuilding, n_features: %ld, type %s",
+  GPUSPATIAL_LOG_INFO("SpatialJoiner %p, FinishBuilding, n_features: %ld, type %s", this,
                       build_geometries_.num_features(),
                       GeometryTypeToString(build_geometries_.get_geometry_type()));
 
@@ -127,6 +129,13 @@ void SpatialJoiner::PushStream(Context* base_ctx, const ArrowSchema* schema,
 
   auto build_type = build_geometries_.get_geometry_type();
   auto stream_type = ctx->stream_geometries.get_geometry_type();
+
+  GPUSPATIAL_LOG_INFO(
+      "SpatialJoiner %p, PushStream, build features %zu, type %s, stream features %zu, type %s",
+      this, build_geometries_.num_features(),
+      GeometryTypeToString(build_geometries_.get_geometry_type()),
+      ctx->stream_geometries.num_features(),
+      GeometryTypeToString(ctx->stream_geometries.get_geometry_type()));
 
 #ifdef GPUSPATIAL_PROFILING
   sw.stop();

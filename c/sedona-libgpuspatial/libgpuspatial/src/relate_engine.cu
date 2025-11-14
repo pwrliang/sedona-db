@@ -343,7 +343,7 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
 
   thrust::transform(
       rmm::exec_policy_nosync(stream), ids.data(), ids.data() + ids_size, poly_ids.data(),
-      [] __device__(const thrust::pair<uint32_t, uint32_t>& pair) { return pair.first; });
+      [] __device__(const thrust::pair<uint32_t, uint32_t>& pair) { return pair.second; });
   auto poly_ids_end =
       thrust::unique(rmm::exec_policy_nosync(stream), poly_ids.begin(), poly_ids.end());
   poly_ids.resize(thrust::distance(poly_ids.begin(), poly_ids_end), stream);
@@ -409,7 +409,8 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
                                cudaMemcpyHostToDevice, stream.value()));
 
     rt_engine_->Render(
-        stream, GetPolygonPointQueryShaderId<POINT_T>(), dim3{ids_size_batch, 1, 1},
+        stream, GetPolygonPointQueryShaderId<POINT_T>(),
+        dim3{static_cast<unsigned int>(ids_size_batch), 1, 1},
         ArrayView<char>((char*)params_buffer.data(), params_buffer.size()));
 
     auto* p_IMs = IMs.data();
@@ -547,7 +548,8 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
                                cudaMemcpyHostToDevice, stream.value()));
 
     rt_engine_->Render(
-        stream, GetMultiPolygonPointQueryShaderId<POINT_T>(), dim3{ids_size_batch, 1, 1},
+        stream, GetMultiPolygonPointQueryShaderId<POINT_T>(),
+        dim3{static_cast<unsigned int>(ids_size_batch), 1, 1},
         ArrayView<char>((char*)params_buffer.data(), params_buffer.size()));
 
     auto* p_IMs = IMs.data();
