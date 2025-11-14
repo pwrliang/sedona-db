@@ -5,9 +5,10 @@
 
 #include "gpuspatial/geom/geometry_type.cuh"
 #include "gpuspatial/loader/device_geometries.cuh"
-#include "gpuspatial/utils/mem_utils.hpp"
-#include "gpuspatial/utils/thread_pool.h"
 #include "gpuspatial/utils/logger.hpp"
+#include "gpuspatial/utils/mem_utils.hpp"
+#include "gpuspatial/utils/stopwatch.h"
+#include "gpuspatial/utils/thread_pool.h"
 
 #include "nanoarrow/nanoarrow.h"
 #include "rmm/cuda_stream_view.hpp"
@@ -534,8 +535,14 @@ class ParallelWkbLoader {
     auto parallelism = thread_pool_->num_threads();
     auto chunk_size = config_.chunk_size;
     auto n_chunks = (length + chunk_size - 1) / chunk_size;
+    Stopwatch sw;
+    double t_fetch_type = 0, t_parse = 0, t_copy = 0;
 
+    sw.start();
     updateGeometryType(offset, length);
+    sw.stop();
+    t_fetch_type = sw.ms();
+
     bool multi = geometry_type_ == GeometryType::kMultiPoint ||
                  geometry_type_ == GeometryType::kMultiLineString ||
                  geometry_type_ == GeometryType::kMultiPolygon;
@@ -554,7 +561,7 @@ class ParallelWkbLoader {
 
       std::vector<std::future<host_geometries_t>> pending_local_geoms;
       auto thread_work_size = (work_size + parallelism - 1) / parallelism;
-
+      sw.start();
       // Each thread will parse in parallel and store results sequentially
       for (int thread_idx = 0; thread_idx < parallelism; thread_idx++) {
         auto run = [&](int tid) {
@@ -594,11 +601,23 @@ class ParallelWkbLoader {
       for (auto& fu : pending_local_geoms) {
         local_geoms.push_back(std::move(fu.get()));
       }
+      sw.stop();
+      t_parse += sw.ms();
+      sw.start();
       geoms_.Append(stream, local_geoms);
+      stream.synchronize();
+      sw.stop();
+      t_copy += sw.ms();
     }
+    GPUSPATIAL_LOG_INFO(
+        "ParallelWkbLoader::Parse: fetched type in %.3f ms, parsed in %.3f ms, copied in "
+        "%.3f ms",
+        t_fetch_type, t_parse, t_copy);
   }
 
   DeviceGeometries<POINT_T, INDEX_T> Finish(rmm::cuda_stream_view stream) {
+    Stopwatch sw;
+    sw.start();
     // Calculate one by one to reduce peak memory
     rmm::device_uvector<INDEX_T> ps_num_geoms(0, stream);
     calcPrefixSum(stream, geoms_.num_geoms, ps_num_geoms);
@@ -687,6 +706,9 @@ class ParallelWkbLoader {
       }
     }
     Clear(stream);
+    stream.synchronize();
+    sw.stop();
+    GPUSPATIAL_LOG_INFO("Finish building DeviceGeometries in %.3f ms", sw.ms());
     return std::move(device_geometries);
   }
 
