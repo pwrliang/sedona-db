@@ -44,7 +44,7 @@ inline rapids_logger::sink_ptr default_sink()
  *
  * @return std::string The default log pattern.
  */
-inline std::string default_pattern() { return "[%6t][%H:%M:%S:%f][%-6l] %v"; }
+inline std::string default_pattern() { return "[LIBGPUSPATIAL] [%6t][%H:%M:%S:%f][%-6l] %v"; }
 
 /**
  * @brief Get the default logger.
