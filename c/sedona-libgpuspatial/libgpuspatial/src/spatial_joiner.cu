@@ -38,7 +38,7 @@ static rmm::device_uvector<OptixAabb> ComputeAABBs(
 
 void SpatialJoiner::Init(const Config* config) {
   config_ = *dynamic_cast<const SpatialJoinerConfig*>(config);
-  GPUSPATIAL_LOG_INFO("Initialize SpatialJoiner %p, Concurrency %u", this,
+  GPUSPATIAL_LOG_INFO("SpatialJoiner %p, Initialize, Concurrency %u", this,
                       config_.concurrency);
   details::RTConfig rt_config = details::get_default_rt_config(config_.ptx_root);
   rt_engine_.Init(rt_config);
@@ -56,7 +56,7 @@ void SpatialJoiner::Init(const Config* config) {
 }
 
 void SpatialJoiner::Clear() {
-  GPUSPATIAL_LOG_INFO("Clear SpatialJoiner %p", this);
+  GPUSPATIAL_LOG_INFO("SpatialJoiner %p, Clear", this);
   bvh_buffer_ = nullptr;
   geometry_grouper_.Clear();
   auto stream = rmm::cuda_stream_default;
@@ -274,7 +274,8 @@ void SpatialJoiner::handleBuildBoxStreamBox(SpatialJoinerContext* ctx,
     refine(ctx, predicate, build_indices, stream_indices);
     ctx->results.Clear(ctx->cuda_stream);  // results have been copied, reuse space
   }
-
+  // need allocate again as the previous results buffer has been shrinked to fit
+  allocateResultBuffer(ctx);
   // backward cast: cast rays from the build geometries with the BVH of stream geometries
   {
     auto dim_x = std::min(OPTIX_MAX_RAYS, build_geometries_.num_features());
@@ -328,11 +329,15 @@ void SpatialJoiner::allocateResultBuffer(SpatialJoinerContext* ctx) {
         "Not enough memory to allocate result space for spatial index");
   }
 
-  auto reserve_bytes = ceil(avail_bytes * config_.result_buffer_memory_reserve_ratio);
+  uint64_t reserve_bytes = ceil(avail_bytes * config_.result_buffer_memory_reserve_ratio);
   reserve_bytes = reserve_bytes / config_.concurrency + 1;
   // two index_t for each result pair (build index, stream index) and another index_t for
   // the temp storage
   uint32_t n_items = reserve_bytes / (2 * sizeof(index_t) + sizeof(index_t));
+
+  GPUSPATIAL_LOG_INFO(
+      "SpatialJoiner %p, Allocate result buffer quota %zu MB, queue size %u", this,
+      reserve_bytes / 1024 / 1024, n_items);
 
   ctx->results.Init(ctx->cuda_stream, n_items);
   ctx->results.Clear(ctx->cuda_stream);
@@ -371,7 +376,6 @@ void SpatialJoiner::filter(SpatialJoinerContext* ctx, uint32_t dim_x, bool swap_
   ctx->timer.start(ctx->cuda_stream);
 #endif
   Stopwatch sw;
-
   sw.start();
   if (dim_x > 0) {
     rt_engine_.Render(ctx->cuda_stream, ctx->shader_id, dim3{dim_x, 1, 1},
@@ -380,6 +384,9 @@ void SpatialJoiner::filter(SpatialJoinerContext* ctx, uint32_t dim_x, bool swap_
   }
   auto result_size = ctx->results.size(ctx->cuda_stream);
   sw.stop();
+  GPUSPATIAL_LOG_INFO(
+      "SpatialJoiner %p, Filter stage, Launched %u rays, Found %u candidates, time %lf ms",
+      this, dim_x, result_size, sw.ms());
   if (swap_id && result_size > 0) {
     // swap the pair (build_id, stream_id) to (stream_id, build_id)
     thrust::for_each(rmm::exec_policy_nosync(ctx->cuda_stream), ctx->results.data(),
