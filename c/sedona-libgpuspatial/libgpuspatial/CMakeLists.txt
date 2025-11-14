@@ -99,12 +99,12 @@ message(VERBOSE "GPUSPATIAL: LIBGPUSPATIAL_LOGGING_LEVEL = '${LIBGPUSPATIAL_LOGG
 # Target Definition (gpuspatial)
 # =============================================================================
 
-include(src/index/shaders/config_shaders.cmake)
+include(src/rt/shaders/config_shaders.cmake)
 CONFIG_SHADERS(PTX_FILES)
 
 message("-- Config shader PTX files ${PTX_FILES}")
 
-add_library(gpuspatial src/index/rt_engine.cpp src/index/relate_engine.cu src/index/spatial_joiner.cu ${PTX_FILES})
+add_library(gpuspatial src/rt/rt_engine.cpp src/relate_engine.cu src/spatial_joiner.cu ${PTX_FILES})
 
 # Link libraries
 target_link_libraries(gpuspatial PUBLIC nanoarrow::nanoarrow geoarrow cuda rmm::rmm rapids_logger::rapids_logger OptiX)

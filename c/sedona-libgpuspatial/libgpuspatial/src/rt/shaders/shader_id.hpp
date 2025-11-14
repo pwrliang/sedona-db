@@ -4,7 +4,7 @@
 #include <type_traits>
 
 #include "gpuspatial/relate/predicate.cuh"
-#include "index/shaders/shader_config.h"
+#include "rt/shaders/shader_config.h"
 namespace gpuspatial {
 namespace detail {
 

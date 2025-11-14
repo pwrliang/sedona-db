@@ -2,7 +2,6 @@
 #include "gpuspatial/geom/geometry_collection.cuh"
 #include "gpuspatial/geom/multi_polygon.cuh"
 #include "gpuspatial/loader/device_geometries.cuh"
-#include "gpuspatial/loader/wkb_loader.h"
 #include "gpuspatial/utils/pinned_vector.h"
 #include "nanoarrow/nanoarrow.hpp"
 

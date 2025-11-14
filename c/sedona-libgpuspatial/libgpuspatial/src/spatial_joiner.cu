@@ -2,14 +2,14 @@
 #include "gpuspatial/index/relate_engine.cuh"
 #include "gpuspatial/index/spatial_joiner.cuh"
 #include "gpuspatial/loader/parallel_wkb_loader.h"
+#include "gpuspatial/utils/logger.hpp"
 #include "gpuspatial/utils/markers.hpp"
 #include "gpuspatial/utils/stopwatch.h"
-#include "gpuspatial/utils/logger.hpp"
-#include "shaders/shader_id.hpp"
 
-#include <rmm/exec_policy.hpp>
+#include "rt/shaders/shader_id.hpp"
 
-#include <rmm/logger.hpp>
+#include "rmm/exec_policy.hpp"
+
 #define OPTIX_MAX_RAYS (1lu << 30)
 namespace gpuspatial {
 
@@ -55,6 +55,7 @@ void SpatialJoiner::Init(const Config* config) {
 }
 
 void SpatialJoiner::Clear() {
+  GPUSPATIAL_LOG_INFO("Clear SpatialJoiner");
   bvh_buffer_ = nullptr;
   geometry_grouper_.Clear();
   auto stream = rmm::cuda_stream_default;
@@ -66,6 +67,7 @@ void SpatialJoiner::Clear() {
 void SpatialJoiner::PushBuild(const ArrowSchema* schema, const ArrowArray* array,
                               int64_t offset, int64_t length) {
   IntervalRangeMarker marker(array->length, "PushBuild");
+  GPUSPATIAL_LOG_INFO("PushBuild, offset %ld, length %ld", offset, length);
   build_loader_->Parse(rmm::cuda_stream_default, array, offset, length);
 }
 
@@ -74,6 +76,10 @@ void SpatialJoiner::FinishBuilding() {
   auto stream = rmm::cuda_stream_default;
 
   build_geometries_ = std::move(build_loader_->Finish(stream));
+
+  GPUSPATIAL_LOG_INFO("FinishBuilding, n_features: %ld, type %s",
+                      build_geometries_.num_features(),
+                      GeometryTypeToString(build_geometries_.get_geometry_type()));
 
   if (build_geometries_.get_geometry_type() == GeometryType::kPoint) {
     geometry_grouper_.Group(stream, build_geometries_, config_.n_points_per_aabb);
@@ -85,9 +91,11 @@ void SpatialJoiner::FinishBuilding() {
 
   relate_engine_ = RelateEngine(&build_geometries_, &rt_engine_);
   RelateEngine<point_t, index_t>::Config re_config;
+
   re_config.memory_quota = config_.relate_engine_memory_quota;
   re_config.bvh_fast_build = config_.prefer_fast_build;
   re_config.bvh_fast_compact = config_.compact;
+
   relate_engine_.set_config(re_config);
 }
 

@@ -1,10 +1,10 @@
-#ifndef GPUSPATIAL_RELATE_RELATE_ENGINE_CUH
-#define GPUSPATIAL_RELATE_RELATE_ENGINE_CUH
-#include <rmm/cuda_stream_view.hpp>
+#pragma once
 #include "gpuspatial/index/detail/rt_engine.hpp"
 #include "gpuspatial/loader/device_geometries.cuh"
 #include "gpuspatial/relate/predicate.cuh"
 #include "gpuspatial/utils/queue.h"
+
+#include "rmm/cuda_stream_view.hpp"
 
 namespace gpuspatial {
 
@@ -137,4 +137,3 @@ class RelateEngine {
   const details::RTEngine* rt_engine_;
 };
 }  // namespace gpuspatial
-#endif  // GPUSPATIAL_RELATE_RELATE_ENGINE_CUH

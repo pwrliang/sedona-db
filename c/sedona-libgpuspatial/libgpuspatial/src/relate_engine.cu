@@ -6,17 +6,16 @@
 #include "gpuspatial/utils/array_view.h"
 #include "gpuspatial/utils/helpers.h"
 #include "gpuspatial/utils/launcher.h"
+#include "gpuspatial/utils/logger.hpp"
 #include "gpuspatial/utils/queue.h"
-#include "gpuspatial/utils/stopwatch.h"
-#include "index/shaders/shader_id.hpp"
+#include "rt/shaders/shader_id.hpp"
+
+#include "rmm/cuda_stream_view.hpp"
+#include "rmm/exec_policy.hpp"
 
 #include <thrust/remove.h>
 #include <thrust/sort.h>
 #include <thrust/unique.h>
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/exec_policy.hpp>
-
-#include "gpuspatial/utils/stopwatch.h"
 
 namespace gpuspatial {
 namespace detail {
@@ -127,7 +126,6 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
     const rmm::cuda_stream_view& stream, const GEOM2_ARRAY_VIEW_T& geom_array2,
     Predicate predicate, Queue<thrust::pair<uint32_t, uint32_t>>& ids) {
   switch (geoms1_->get_geometry_type()) {
-
     case GeometryType::kPoint: {
       using geom1_array_view_t = PointArrayView<POINT_T, INDEX_T>;
       Evaluate(stream, geoms1_->template GetGeometryArrayView<geom1_array_view_t>(),
@@ -175,8 +173,10 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
     const rmm::cuda_stream_view& stream, const GEOM1_ARRAY_VIEW_T& geom_array1,
     const GEOM2_ARRAY_VIEW_T& geom_array2, Predicate predicate,
     Queue<thrust::pair<uint32_t, uint32_t>>& ids) {
-  auto ids_size = ids.size(stream);
-
+  size_t ids_size = ids.size(stream);
+  GPUSPATIAL_LOG_INFO(
+      "Refine with generic kernel, geom1 %zu, geom2 %zu, predicate %s, result size %zu",
+      geom_array1.size(), geom_array2.size(), PredicateToString(predicate), ids_size);
   auto end = thrust::remove_if(
       rmm::exec_policy_nosync(stream), ids.data(), ids.data() + ids_size,
       [=] __device__(const thrust::pair<uint32_t, uint32_t>& pair) {
@@ -188,7 +188,8 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
         auto IM = relate(geom1, geom2);
         return !detail::EvaluatePredicate(predicate, IM);
       });
-  auto new_size = end - ids.data();
+  size_t new_size = thrust::distance(ids.data(), end);
+  GPUSPATIAL_LOG_INFO("Refined, result size %zu", new_size);
   ids.set_size(stream, new_size);
 }
 
@@ -319,7 +320,13 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
     const MultiPointArrayView<POINT_T, INDEX_T>& multi_point_array,
     const PolygonArrayView<POINT_T, INDEX_T>& poly_array, Predicate predicate,
     Queue<thrust::pair<uint32_t, uint32_t>>& ids, bool inverse) {
-  auto ids_size = ids.size(stream);
+  using params_t = detail::LaunchParamsPolygonPointQuery<POINT_T, INDEX_T>;
+
+  size_t ids_size = ids.size(stream);
+  GPUSPATIAL_LOG_INFO(
+      "Refine with ray-tracing, (multi-)point %zu, polygon %zu, predicate %s, result size %zu, inverse %d",
+      !point_array.empty() ? point_array.size() : multi_point_array.size(),
+      poly_array.size(), PredicateToString(predicate), ids_size, inverse);
 
   if (ids_size == 0) {
     return;
@@ -343,11 +350,15 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
   poly_ids.shrink_to_fit(stream);
 
   auto bvh_bytes = EstimateBVHSize(stream, poly_array, ArrayView<uint32_t>(poly_ids));
-  auto avail_bytes = rmm::available_device_memory().first * config_.memory_quota;
-  int n_batches = bvh_bytes / avail_bytes + 1;
+  size_t avail_bytes = rmm::available_device_memory().first * config_.memory_quota;
+  auto n_batches = bvh_bytes / avail_bytes + 1;
   auto batch_size = (ids_size + n_batches - 1) / n_batches;
   auto invalid_pair = thrust::make_pair(std::numeric_limits<uint32_t>::max(),
                                         std::numeric_limits<uint32_t>::max());
+
+  GPUSPATIAL_LOG_INFO(
+      "Unique polygons %zu, memory quota %zu MB, estimated BVH size %zu MB",
+      poly_ids.size(), avail_bytes / (1024 * 1024), bvh_bytes / (1024 * 1024));
 
   for (int batch = 0; batch < n_batches; batch++) {
     auto ids_begin = batch * batch_size;
@@ -377,8 +388,6 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
     // aabb id -> vertex begin[polygon] + ith point in this polygon
     auto handle = BuildBVH(stream, poly_array, ArrayView<INDEX_T>(poly_ids), seg_begins,
                            bvh_buffer, aabb_poly_ids, aabb_ring_ids);
-
-    using params_t = detail::LaunchParamsPolygonPointQuery<POINT_T, INDEX_T>;
 
     params_t params;
 
@@ -428,7 +437,9 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
       [=] __device__(const thrust::pair<uint32_t, uint32_t>& pair) {
         return pair == invalid_pair;
       });
-  ids.set_size(stream, end - ids.data());
+  size_t new_size = thrust::distance(ids.data(), end);
+  GPUSPATIAL_LOG_INFO("Refined, result size %zu", new_size);
+  ids.set_size(stream, new_size);
 }
 
 template <typename POINT_T, typename INDEX_T>
@@ -438,10 +449,14 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
     const MultiPointArrayView<POINT_T, INDEX_T>& multi_point_array,
     const MultiPolygonArrayView<POINT_T, INDEX_T>& multi_poly_array, Predicate predicate,
     Queue<thrust::pair<uint32_t, uint32_t>>& ids, bool inverse) {
+  using params_t = detail::LaunchParamsPointMultiPolygonQuery<POINT_T, INDEX_T>;
+
   assert(point_array.empty() || multi_point_array.empty());
-  Stopwatch sw;
-  sw.start();
-  auto ids_size = ids.size(stream);
+  size_t ids_size = ids.size(stream);
+  GPUSPATIAL_LOG_INFO(
+      "Refine with ray-tracing, (multi-)point %zu, multi-polygon %zu, predicate %s, result size %zu, inverse %d",
+      !point_array.empty() ? point_array.size() : multi_point_array.size(),
+      multi_poly_array.size(), PredicateToString(predicate), ids_size, inverse);
 
   if (ids_size == 0) {
     return;
@@ -469,11 +484,14 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
 
   auto bvh_bytes =
       EstimateBVHSize(stream, multi_poly_array, ArrayView<uint32_t>(multi_poly_ids));
-  auto avail_bytes = rmm::available_device_memory().first * config_.memory_quota;
-  int n_batches = bvh_bytes / avail_bytes + 1;
+  size_t avail_bytes = rmm::available_device_memory().first * config_.memory_quota;
+  auto n_batches = bvh_bytes / avail_bytes + 1;
   auto batch_size = (ids_size + n_batches - 1) / n_batches;
   auto invalid_pair = thrust::make_pair(std::numeric_limits<uint32_t>::max(),
                                         std::numeric_limits<uint32_t>::max());
+  GPUSPATIAL_LOG_INFO(
+      "Unique multi-polygons %zu, memory quota %zu MB, estimated BVH size %zu MB",
+      multi_poly_ids.size(), avail_bytes / (1024 * 1024), bvh_bytes / (1024 * 1024));
 
   for (int batch = 0; batch < n_batches; batch++) {
     auto ids_begin = batch * batch_size;
@@ -507,13 +525,6 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
                            seg_begins, uniq_part_begins, bvh_buffer, aabb_multi_poly_ids,
                            aabb_part_ids, aabb_ring_ids);
 
-    using params_t = detail::LaunchParamsPointMultiPolygonQuery<POINT_T, INDEX_T>;
-
-    stream.synchronize();
-    sw.stop();
-
-    printf("prepare time %lf ms\n", sw.ms());
-
     params_t params;
 
     params.points = point_array;
@@ -535,16 +546,10 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
     CUDA_CHECK(cudaMemcpyAsync(params_buffer.data(), &params, sizeof(params_t),
                                cudaMemcpyHostToDevice, stream.value()));
 
-    stream.synchronize();
-
-    sw.start();
     rt_engine_->Render(
         stream, GetMultiPolygonPointQueryShaderId<POINT_T>(), dim3{ids_size_batch, 1, 1},
         ArrayView<char>((char*)params_buffer.data(), params_buffer.size()));
-    stream.synchronize();
-    sw.stop();
 
-    printf("trace time %f ms\n", sw.ms());
     auto* p_IMs = IMs.data();
     auto* p_ids = ids.data();
 
@@ -565,17 +570,14 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
                         }
                       });
   }
-
   auto end = thrust::remove_if(
       rmm::exec_policy_nosync(stream), ids.data(), ids.data() + ids_size,
       [=] __device__(const thrust::pair<uint32_t, uint32_t>& pair) {
         return pair == invalid_pair;
       });
-  ids.set_size(stream, end - ids.data());
-
-  // Debug: Find max indices to detect out-of-range values
-  auto result_size = end - ids.data();
-  printf("Result size %u\n", result_size);
+  size_t new_size = thrust::distance(ids.data(), end);
+  GPUSPATIAL_LOG_INFO("Refined, result size %zu", new_size);
+  ids.set_size(stream, new_size);
 }
 
 template <typename POINT_T, typename INDEX_T>
@@ -776,10 +778,7 @@ OptixTraversableHandle RelateEngine<POINT_T, INDEX_T>::BuildBVH(
   auto n_mult_polygons = multi_poly_ids.size();
   rmm::device_uvector<uint32_t> n_segs(n_mult_polygons, stream);
   auto* p_nsegs = n_segs.data();
-  Stopwatch sw;
-  double count_time, fill_time, build_time;
 
-  sw.start();
   LaunchKernel(stream, [=] __device__() {
     using WarpReduce = cub::WarpReduce<uint32_t>;
     __shared__ WarpReduce::TempStorage temp_storage[MAX_BLOCK_SIZE / 32];
@@ -805,9 +804,6 @@ OptixTraversableHandle RelateEngine<POINT_T, INDEX_T>::BuildBVH(
       }
     }
   });
-  stream.synchronize();
-  sw.stop();
-  count_time = sw.ms();
 
   seg_begins = std::move(rmm::device_uvector<INDEX_T>(n_mult_polygons + 1, stream));
   auto* p_seg_begins = seg_begins.data();
@@ -818,8 +814,6 @@ OptixTraversableHandle RelateEngine<POINT_T, INDEX_T>::BuildBVH(
 
   // each line seg is corresponding to an AABB and each ring includes an empty AABB
   uint32_t num_aabbs = seg_begins.back_element(stream);
-
-  printf("num aabbs %u\n", num_aabbs);
 
   aabb_multi_poly_ids = std::move(rmm::device_uvector<INDEX_T>(num_aabbs, stream));
   aabb_part_ids = std::move(rmm::device_uvector<uint32_t>(num_aabbs, stream));
@@ -848,7 +842,6 @@ OptixTraversableHandle RelateEngine<POINT_T, INDEX_T>::BuildBVH(
   num_parts.resize(0, stream);
   num_parts.shrink_to_fit(stream);
 
-  sw.start();
   LaunchKernel(stream.value(), [=] __device__() {
     auto lane = threadIdx.x % 32;
     auto global_warp_id = TID_1D / 32;
@@ -905,21 +898,10 @@ OptixTraversableHandle RelateEngine<POINT_T, INDEX_T>::BuildBVH(
       assert(p_seg_begins[i + 1] == tail);
     }
   });
-  stream.synchronize();
-  sw.stop();
-  fill_time = sw.ms();
 
   assert(rt_engine_ != nullptr);
-  sw.start();
-  auto handle =
-      rt_engine_->BuildAccelCustom(stream.value(), ArrayView<OptixAabb>(aabbs), buffer,
-                                   config_.bvh_fast_build, config_.bvh_fast_compact);
-  stream.synchronize();
-  sw.stop();
-  build_time = sw.ms();
-  printf("count line segs %lf ms, fill AABBs %lf ms, build BVH %lf ms\n", count_time,
-         fill_time, build_time);
-  return handle;
+  return rt_engine_->BuildAccelCustom(stream.value(), ArrayView<OptixAabb>(aabbs), buffer,
+                                      config_.bvh_fast_build, config_.bvh_fast_compact);
 }
 // Explicitly instantiate the template for specific types
 template class RelateEngine<Point<double, 2>, uint32_t>;

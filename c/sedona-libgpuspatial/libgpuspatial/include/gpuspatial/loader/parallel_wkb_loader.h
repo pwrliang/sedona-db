@@ -7,16 +7,13 @@
 #include "gpuspatial/loader/device_geometries.cuh"
 #include "gpuspatial/utils/mem_utils.hpp"
 #include "gpuspatial/utils/thread_pool.h"
+#include "gpuspatial/utils/logger.hpp"
 
 #include "nanoarrow/nanoarrow.h"
 #include "rmm/cuda_stream_view.hpp"
 #include "rmm/device_uvector.hpp"
 #include "rmm/exec_policy.hpp"
 #include "rmm/mr/device/managed_memory_resource.hpp"
-
-#include <condition_variable>
-#include <mutex>
-#include <thread>
 
 namespace gpuspatial {
 namespace detail {
@@ -738,9 +735,6 @@ class ParallelWkbLoader {
           NANOARROW_THROW_NOT_OK(detail::WKBReaderReadEndian(s, &error));
           uint32_t geometry_type;
           NANOARROW_THROW_NOT_OK(detail::WKBReaderReadUInt32(s, &geometry_type, &error));
-          if (geometry_type >= type_flags.size()) {
-            printf("Geom type %u at row %ld\n", geometry_type, (long)arrow_offset);
-          }
           assert(geometry_type < type_flags.size());
           type_flags[geometry_type] = true;
         }

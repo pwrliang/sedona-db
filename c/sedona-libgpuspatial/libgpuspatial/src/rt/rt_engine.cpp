@@ -2,7 +2,9 @@
 
 #include "gpuspatial/utils/cuda_utils.h"
 #include "gpuspatial/utils/exception.h"
-#include "index/shaders/shader_config.h"
+#include "gpuspatial/utils/logger.hpp"
+
+#include "rt/shaders/shader_config.h"
 
 // this header provides OPTIX_FUNCTION_TABLE_SYMBOL
 // Only included once in the compilation unit
@@ -17,7 +19,7 @@
 #include <stdexcept>
 #include <utility>
 
-#include <rmm/device_scalar.hpp>
+#include "rmm/device_scalar.hpp"
 
 namespace {
 // OptiX log callback function
@@ -33,8 +35,8 @@ namespace details {
 
 void RTConfig::AddModule(const Module& mod) {
   if (access(mod.get_program_path().c_str(), R_OK) != 0) {
-    std::cerr << "Error: cannot open " << mod.get_program_path() << std::endl;
-    abort();
+    GPUSPATIAL_LOG_CRITICAL("Cannot open %s", mod.get_program_path().c_str());
+    throw std::runtime_error("Cannot open shader file " + mod.get_program_path());
   }
   modules[mod.get_id()] = mod;
 }
@@ -133,7 +135,10 @@ OptixTraversableHandle RTEngine::BuildAccelCustom(cudaStream_t cuda_stream,
   OPTIX_CHECK(optixAccelComputeMemoryUsage(optix_context_, &accelOptions, &build_input, 1,
                                            &blas_buffer_sizes));
 
-  // printf("estimated BVS size %lu MB\n", blas_buffer_sizes.tempSizeInBytes / 1024 / 1024);
+  GPUSPATIAL_LOG_INFO(
+      "ComputeBVHMemoryUsage, AABB count: %u, temp size: %zu MB, output size: %zu MB",
+      num_prims, blas_buffer_sizes.tempSizeInBytes / 1024 / 1024,
+      blas_buffer_sizes.outputSizeInBytes / 1024 / 1024);
 
   rmm::device_buffer temp_buf(blas_buffer_sizes.tempSizeInBytes, cuda_stream);
   out_buf.resize(blas_buffer_sizes.outputSizeInBytes, cuda_stream);

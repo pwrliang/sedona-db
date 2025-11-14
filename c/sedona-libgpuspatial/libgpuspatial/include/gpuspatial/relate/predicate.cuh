@@ -1,9 +1,4 @@
-#ifndef GPUSPATIAL_RELATE_PREDICATE_CUH
-#define GPUSPATIAL_RELATE_PREDICATE_CUH
-#include <cstdint>
-#include <cassert>
-#include "gpuspatial/relate/im.cuh"
-#include "gpuspatial/utils/cuda_utils.h"
+#pragma once
 
 namespace gpuspatial {
 
@@ -18,5 +13,34 @@ enum class Predicate {
   kCoveredBy
 };
 
+/**
+ * @brief Converts a Predicate enum class value to its string representation.
+ *
+ * @param predicate The Predicate value to convert.
+ * @return const char* A string literal corresponding to the enum value.
+ * Returns "Unknown Predicate" if the value is not recognized.
+ */
+inline const char* PredicateToString(Predicate predicate) {
+  switch (predicate) {
+    case Predicate::kEquals:
+      return "Equals";
+    case Predicate::kDisjoint:
+      return "Disjoint";
+    case Predicate::kTouches:
+      return "Touches";
+    case Predicate::kContains:
+      return "Contains";
+    case Predicate::kCovers:
+      return "Covers";
+    case Predicate::kIntersects:
+      return "Intersects";
+    case Predicate::kWithin:
+      return "Within";
+    case Predicate::kCoveredBy:
+      return "CoveredBy";
+    default:
+      // Handle any unexpected values safely
+      return "Unknown Predicate";
+  }
+}
 }  // namespace gpuspatial
-#endif  // GPUSPATIAL_RELATE_PREDICATE_CUH

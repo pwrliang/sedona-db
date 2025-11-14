@@ -14,7 +14,7 @@ function(CONFIG_SHADERS SHADER_PTX_FILES)
 
     foreach (POINT_TYPE IN LISTS SHADER_POINT_TYPES)
         NVCUDA_COMPILE_MODULE(
-                SOURCES "${PROJECT_SOURCE_DIR}/src/index/shaders/point_query.cu"
+                SOURCES "${PROJECT_SOURCE_DIR}/src/rt/shaders/point_query.cu"
                 DEPENDENCIES ${SHADERS_DEPS}
                 TARGET_PATH "${OUTPUT_DIR}"
                 PREFIX "${POINT_TYPE}_"
@@ -33,7 +33,7 @@ function(CONFIG_SHADERS SHADER_PTX_FILES)
         list(APPEND ALL_GENERATED_FILES ${PROGRAM_MODULES})
 
         NVCUDA_COMPILE_MODULE(
-                SOURCES "${PROJECT_SOURCE_DIR}/src/index/shaders/box_query_forward.cu"
+                SOURCES "${PROJECT_SOURCE_DIR}/src/rt/shaders/box_query_forward.cu"
                 DEPENDENCIES ${SHADERS_DEPS}
                 TARGET_PATH "${OUTPUT_DIR}"
                 PREFIX "${POINT_TYPE}_"
@@ -52,7 +52,7 @@ function(CONFIG_SHADERS SHADER_PTX_FILES)
         list(APPEND ALL_GENERATED_FILES ${PROGRAM_MODULES})
 
         NVCUDA_COMPILE_MODULE(
-                SOURCES "${PROJECT_SOURCE_DIR}/src/index/shaders/box_query_backward.cu"
+                SOURCES "${PROJECT_SOURCE_DIR}/src/rt/shaders/box_query_backward.cu"
                 DEPENDENCIES ${SHADERS_DEPS}
                 TARGET_PATH "${OUTPUT_DIR}"
                 PREFIX "${POINT_TYPE}_"
@@ -71,7 +71,7 @@ function(CONFIG_SHADERS SHADER_PTX_FILES)
         list(APPEND ALL_GENERATED_FILES ${PROGRAM_MODULES})
 
         NVCUDA_COMPILE_MODULE(
-                SOURCES "${PROJECT_SOURCE_DIR}/src/index/shaders/polygon_point_query.cu"
+                SOURCES "${PROJECT_SOURCE_DIR}/src/rt/shaders/polygon_point_query.cu"
                 DEPENDENCIES ${SHADERS_DEPS}
                 TARGET_PATH "${OUTPUT_DIR}"
                 PREFIX "${POINT_TYPE}_"
@@ -90,7 +90,7 @@ function(CONFIG_SHADERS SHADER_PTX_FILES)
         list(APPEND ALL_GENERATED_FILES ${PROGRAM_MODULES})
 
         NVCUDA_COMPILE_MODULE(
-                SOURCES "${PROJECT_SOURCE_DIR}/src/index/shaders/multipolygon_point_query.cu"
+                SOURCES "${PROJECT_SOURCE_DIR}/src/rt/shaders/multipolygon_point_query.cu"
                 DEPENDENCIES ${SHADERS_DEPS}
                 TARGET_PATH "${OUTPUT_DIR}"
                 PREFIX "${POINT_TYPE}_"

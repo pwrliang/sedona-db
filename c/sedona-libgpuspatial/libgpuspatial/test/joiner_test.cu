@@ -1,7 +1,6 @@
 #include "array_stream.hpp"
 #include "gpuspatial/index/spatial_joiner.cuh"
 #include "gpuspatial/loader/device_geometries.cuh"
-#include "gpuspatial/loader/wkb_loader.h"
 #include "nanoarrow/nanoarrow.hpp"
 
 #include "geoarrow_geos/geoarrow_geos.hpp"
