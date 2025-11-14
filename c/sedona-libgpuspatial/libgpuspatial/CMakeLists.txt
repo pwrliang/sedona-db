@@ -25,11 +25,6 @@ include(rapids-export)
 include(rapids-find)
 
 rapids_cmake_build_type(Release)
-#include(cmake/configure_build_type.cmake)
-# Provides standard installation directory variables (e.g., CMAKE_INSTALL_LIBDIR)
-include(GNUInstallDirs)
-
-
 
 # =============================================================================
 # Fetch Dependencies
@@ -47,6 +42,8 @@ FetchContent_Declare(
         OVERRIDE_FIND_PACKAGE
 )
 FetchContent_MakeAvailable(nanoarrow)
+rapids_export_package(BUILD nanoarrow gpuspatial-exports)
+rapids_export_package(INSTALL nanoarrow gpuspatial-exports)
 
 FetchContent_Declare(
         geoarrow
@@ -56,17 +53,8 @@ FetchContent_Declare(
         OVERRIDE_FIND_PACKAGE
 )
 FetchContent_MakeAvailable(geoarrow)
-
-
-#FetchContent_Declare(
-#        rmm
-#        URL https://github.com/rapidsai/rmm/archive/refs/tags/v25.06.00.zip
-#        URL_HASH SHA256=a79cb3c396dfa1084584ce5f8bf2ae3e4e450f42d4c0c8046e36625a721e1c8b
-#        DOWNLOAD_EXTRACT_TIMESTAMP false
-#        SOURCE_SUBDIR cpp
-#        OVERRIDE_FIND_PACKAGE
-#)
-#FetchContent_MakeAvailable(rmm)
+rapids_export_package(BUILD geoarrow gpuspatial-exports)
+rapids_export_package(INSTALL geoarrow gpuspatial-exports)
 
 FetchContent_Declare(
         OptiX
@@ -83,21 +71,33 @@ target_include_directories(OptiX INTERFACE
         $<INSTALL_INTERFACE:include> # Corresponds to <prefix>/include
 )
 
+rapids_find_package(
+        CUDAToolkit REQUIRED
+        BUILD_EXPORT_SET gpuspatial-exports
+        INSTALL_EXPORT_SET gpuspatial-exports)
+
 # rapids dependencies
 rapids_cpm_init()
-#include(${rapids-cmake-dir}/cpm/rapids_logger.cmake)
-#rapids_cpm_rapids_logger(BUILD_EXPORT_SET cudf-exports INSTALL_EXPORT_SET cudf-exports)
-#create_logger_macros(CUDF "cudf::default_logger()" include/cudf)
+include(${rapids-cmake-dir}/cpm/rapids_logger.cmake)
+rapids_cpm_rapids_logger(BUILD_EXPORT_SET gpuspatial-exports INSTALL_EXPORT_SET gpuspatial-exports)
+create_logger_macros(GPUSPATIAL "gpuspatial::default_logger()" include/gpuspatial)
 
 include(cmake/get_rmm.cmake)
+
+# Set logging level
+set(LIBGPUSPATIAL_LOGGING_LEVEL
+        "INFO"
+        CACHE STRING "Choose the logging level."
+)
+set_property(
+        CACHE LIBGPUSPATIAL_LOGGING_LEVEL PROPERTY STRINGS "TRACE" "DEBUG" "INFO" "WARN" "ERROR" "CRITICAL"
+        "OFF"
+)
+message(VERBOSE "GPUSPATIAL: LIBGPUSPATIAL_LOGGING_LEVEL = '${LIBGPUSPATIAL_LOGGING_LEVEL}'.")
 
 # =============================================================================
 # Target Definition (gpuspatial)
 # =============================================================================
-find_package(CUDAToolkit REQUIRED)
-
-#find_package(spdlog CONFIG REQUIRED)
-#find_package(fmt CONFIG REQUIRED)
 
 include(src/index/shaders/config_shaders.cmake)
 CONFIG_SHADERS(PTX_FILES)
@@ -107,19 +107,20 @@ message("-- Config shader PTX files ${PTX_FILES}")
 add_library(gpuspatial src/index/rt_engine.cpp src/index/relate_engine.cu src/index/spatial_joiner.cu ${PTX_FILES})
 
 # Link libraries
-target_link_libraries(gpuspatial PUBLIC nanoarrow::nanoarrow geoarrow cuda rmm::rmm OptiX) #  spdlog::spdlog
+target_link_libraries(gpuspatial PUBLIC nanoarrow::nanoarrow geoarrow cuda rmm::rmm rapids_logger::rapids_logger OptiX)
 
 # Set include directories
 target_include_directories(gpuspatial
         PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include> # For generated logger header
         $<INSTALL_INTERFACE:include> # Path for installed headers
         PRIVATE
         src
 )
 
 # Set compile options
-target_compile_options(gpuspatial PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda --expt-relaxed-constexpr>)
+target_compile_options(gpuspatial PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda --expt-relaxed-constexpr> -DGPUSPATIAL_LOG_ACTIVE_LEVEL=RAPIDS_LOGGER_LOG_LEVEL_${LIBGPUSPATIAL_LOGGING_LEVEL})
 
 add_library(gpuspatial_c src/gpuspatial_c.cc)
 target_link_libraries(gpuspatial_c PUBLIC gpuspatial)
@@ -127,19 +128,22 @@ target_link_libraries(gpuspatial_c PUBLIC gpuspatial)
 # =============================================================================
 # Installation
 # =============================================================================
+include(GNUInstallDirs)
+
+# Install OptiX headers
 install(DIRECTORY ${optix_SOURCE_DIR}/include/
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
-set(GPUSPATIAL_SHADER_INSTALL_DIR "${CMAKE_INSTALL_DATADIR}/gpuspatial/shaders")
 # Install the .ptx shader files
+set(GPUSPATIAL_SHADER_INSTALL_DIR "${CMAKE_INSTALL_DATADIR}/gpuspatial/shaders")
 install(FILES ${PTX_FILES}
         DESTINATION ${GPUSPATIAL_SHADER_INSTALL_DIR}
 )
 
 # Install the library and public headers
 install(TARGETS gpuspatial gpuspatial_c OptiX
-        EXPORT gpuspatial-targets
+        EXPORT gpuspatial-exports
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
         INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
@@ -152,36 +156,19 @@ install(DIRECTORY include/gpuspatial/
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gpuspatial
 )
 
-# --- CMake Package Configuration ---
-include(CMakePackageConfigHelpers)
-
-# Generate the version file
-write_basic_package_version_file(
-        "${CMAKE_CURRENT_BINARY_DIR}/cmake/gpuspatialConfigVersion.cmake"
+rapids_export(
+        INSTALL gpuspatial
+        EXPORT_SET gpuspatial-exports
+        GLOBAL_TARGETS gpuspatial
         VERSION ${PROJECT_VERSION}
-        COMPATIBILITY AnyNewerVersion
-)
+        NAMESPACE gpuspatial::)
 
-# Configure the package file from a template
-configure_package_config_file(
-        "gpuspatialConfig.cmake.in"
-        "${CMAKE_CURRENT_BINARY_DIR}/cmake/gpuspatialConfig.cmake"
-        INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/gpuspatial"
-        PATH_VARS GPUSPATIAL_SHADER_INSTALL_DIR
-)
-
-# Install the CMake package files
-install(EXPORT gpuspatial-targets
-        FILE gpuspatial-targets.cmake
-        NAMESPACE gpuspatial::
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/gpuspatial
-)
-
-install(FILES
-        "${CMAKE_CURRENT_BINARY_DIR}/cmake/gpuspatialConfig.cmake"
-        "${CMAKE_CURRENT_BINARY_DIR}/cmake/gpuspatialConfigVersion.cmake"
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/gpuspatial
-)
+rapids_export(
+        BUILD gpuspatial
+        EXPORT_SET gpuspatial-exports
+        GLOBAL_TARGETS gpuspatial
+        VERSION ${PROJECT_VERSION}
+        NAMESPACE gpuspatial::)
 
 if (GPUSPATIAL_BUILD_TESTS OR GPUSPATIAL_BUILD_BENCHMARK)
     FetchContent_Declare(
@@ -267,9 +254,9 @@ if (GPUSPATIAL_BUILD_BENCHMARK)
     add_executable(benchmark benchmark/benchmark.cpp
             benchmark/run_queries.cu
             benchmark/flags.cpp
-#            benchmark/baseline/boost_index.cpp
+            #            benchmark/baseline/boost_index.cpp
             benchmark/baseline/geos_index.cpp
-#            benchmark/baseline/wkb.cpp
+            #            benchmark/baseline/wkb.cpp
     )
     target_link_libraries(benchmark PRIVATE cuda geoarrow gpuspatial GEOS::geos GEOS::geos_c geoarrow_geos gflags
             Arrow::arrow_static Parquet::parquet_static nlohmann_json::nlohmann_json Boost::geometry)

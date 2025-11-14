@@ -4,11 +4,12 @@
 #include "gpuspatial/loader/parallel_wkb_loader.h"
 #include "gpuspatial/utils/markers.hpp"
 #include "gpuspatial/utils/stopwatch.h"
+#include "gpuspatial/utils/logger.hpp"
 #include "shaders/shader_id.hpp"
 
 #include <rmm/exec_policy.hpp>
 
-
+#include <rmm/logger.hpp>
 #define OPTIX_MAX_RAYS (1lu << 30)
 namespace gpuspatial {
 
@@ -37,7 +38,7 @@ static rmm::device_uvector<OptixAabb> ComputeAABBs(
 
 void SpatialJoiner::Init(const Config* config) {
   config_ = *dynamic_cast<const SpatialJoinerConfig*>(config);
-
+  GPUSPATIAL_LOG_INFO("Initialize RT engine with ptx root: %s", config_.ptx_root);
   details::RTConfig rt_config = details::get_default_rt_config(config_.ptx_root);
   rt_engine_.Init(rt_config);
 

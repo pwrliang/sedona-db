@@ -21,7 +21,6 @@
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
-
 // #define GPUSPATIAL_PROFILING
 namespace gpuspatial {
 
@@ -158,8 +157,6 @@ class SpatialJoiner : public StreamingJoiner {
   OptixTraversableHandle handle_;
 
   std::shared_ptr<ObjectPool<SpatialJoinerContext>> ctx_pool_;
-
-
 
   OptixTraversableHandle buildBVH(const rmm::cuda_stream_view& stream,
                                   const ArrayView<OptixAabb>& aabbs,
