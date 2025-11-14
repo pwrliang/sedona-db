@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_GEOM_MULTI_POINT_CUH
-#define GPUSPATIAL_GEOM_MULTI_POINT_CUH
+#pragma once
 #include "gpuspatial/geom/box.cuh"
 #include "gpuspatial/utils/array_view.h"
 #include "gpuspatial/utils/cuda_utils.h"
@@ -84,4 +83,3 @@ class MultiPointArrayView {
 };
 
 }  // namespace gpuspatial
-#endif  //  GPUSPATIAL_GEOM_MULTI_POINT_CUH

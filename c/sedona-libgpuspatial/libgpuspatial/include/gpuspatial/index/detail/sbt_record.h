@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_DETAILS_SBT_RECORD_H
-#define GPUSPATIAL_DETAILS_SBT_RECORD_H
+#pragma once
 #include <optix_types.h>
 namespace gpuspatial {
 namespace details {
@@ -30,4 +29,3 @@ struct __align__(OPTIX_SBT_RECORD_ALIGNMENT) HitgroupRecord {
 }  // namespace details
 }  // namespace gpuspatial
 
-#endif  // GPUSPATIAL_DETAILS_SBT_RECORD_H

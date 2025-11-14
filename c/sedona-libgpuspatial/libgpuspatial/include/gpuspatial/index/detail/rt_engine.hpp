@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_DETAILS_RT_ENGINE_HPP
-#define GPUSPATIAL_DETAILS_RT_ENGINE_HPP
+#pragma once
 
 #include "gpuspatial/utils/array_view.h"
 
@@ -168,5 +167,3 @@ class RTEngine {
 
 }  // namespace details
 }  // namespace gpuspatial
-
-#endif  // GPUSPATIAL_DETAILS_RT_ENGINE_HPP

@@ -1,8 +1,3 @@
-
-
-#ifndef GPUSPATIAL_UTILS_FLOATING_POINT_H
-#define GPUSPATIAL_UTILS_FLOATING_POINT_H
-
 /*
  * Copyright (c) 2022-2023, NVIDIA CORPORATION.
  *
@@ -129,5 +124,3 @@ bool DEV_HOST float_equal(T const& flhs, T const& frhs) {
 }
 
 }  // namespace gpuspatial
-
-#endif  // GPUSPATIAL_UTILS_FLOATING_POINT_H

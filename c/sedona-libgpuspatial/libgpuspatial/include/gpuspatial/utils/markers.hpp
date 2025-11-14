@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_UTILS_MARKERS_HPP
-#define GPUSPATIAL_UTILS_MARKERS_HPP
+#pragma once
 
 #include "nvtx3/nvToolsExt.h"
 
@@ -141,4 +140,3 @@ struct IntervalRangeMarker : public RangeMarker {
 };
 }
 
-#endif // GPUSPATIAL_UTILS_MARKERS_HPP

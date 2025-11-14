@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_INDEX_SPATIAL_JOINER_CUH
-#define GPUSPATIAL_INDEX_SPATIAL_JOINER_CUH
+#pragma once
 #include "geoarrow/geoarrow_type.h"
 #include "gpuspatial/geom/box.cuh"
 #include "gpuspatial/geom/point.cuh"
@@ -168,4 +167,3 @@ class SpatialJoiner : public StreamingJoiner {
 };
 
 }  // namespace gpuspatial
-#endif  // GPUSPATIAL_INDEX_SPATIAL_JOINER_CUH

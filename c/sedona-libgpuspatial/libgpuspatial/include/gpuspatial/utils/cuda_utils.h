@@ -1,5 +1,4 @@
-#ifndef UTILS_CUDA_UTILS_H
-#define UTILS_CUDA_UTILS_H
+#pragma once
 #define MAX_BLOCK_SIZE (256)
 #define WARP_SIZE (32)
 #if defined(__CUDACC__) || defined(__CUDABE__)
@@ -21,4 +20,3 @@
 #endif
 
 
-#endif  // UTILS_CUDA_UTILS_H

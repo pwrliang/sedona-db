@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_INDEX_OBJECT_POOL_HPP
-#define GPUSPATIAL_INDEX_OBJECT_POOL_HPP
+#pragma once
 
 #include <memory>
 #include <mutex>
@@ -144,4 +143,3 @@ class ObjectPool : public std::enable_shared_from_this<ObjectPool<T>> {
 };
 
 }  // namespace gpuspatial
-#endif  // GPUSPATIAL_INDEX_OBJECT_POOL_HPP

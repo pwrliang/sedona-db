@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_UTILS_HELPERS_H
-#define GPUSPATIAL_UTILS_HELPERS_H
+#pragma once
 #include <cassert>
 #include <climits>
 #include <cmath>
@@ -60,4 +59,3 @@ DEV_HOST_INLINE void pack64(T* t, unsigned int& i0, unsigned int& i1) {
 
 }  // namespace gpuspatial
 
-#endif  // GPUSPATIAL_UTILS_HELPERS_H

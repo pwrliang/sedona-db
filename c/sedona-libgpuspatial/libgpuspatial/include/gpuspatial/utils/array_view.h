@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_UTILS_ARRAY_VIEW_H
-#define GPUSPATIAL_UTILS_ARRAY_VIEW_H
+#pragma once
 #include "gpuspatial/utils/cuda_utils.h"
 
 #include <thrust/swap.h>
@@ -68,4 +67,3 @@ class ArrayView {
 };
 }  // namespace gpuspatial
 
-#endif  // GPUSPATIAL_UTILS_ARRAY_VIEW_H

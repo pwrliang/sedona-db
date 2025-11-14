@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_GEOM_MULTI_POLYGON_CUH
-#define GPUSPATIAL_GEOM_MULTI_POLYGON_CUH
+#pragma once
 #include "gpuspatial/geom/polygon.cuh"
 
 namespace gpuspatial {
@@ -169,4 +168,3 @@ class MultiPolygonArrayView {
   ArrayView<box_t> mbrs_;
 };
 }  // namespace gpuspatial
-#endif  // GPUSPATIAL_GEOM_MULTI_POLYGON_CUH

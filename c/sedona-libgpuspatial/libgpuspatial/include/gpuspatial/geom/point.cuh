@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_GEOMS_POINT_CUH
-#define GPUSPATIAL_GEOMS_POINT_CUH
+#pragma once
 #include "gpuspatial/geom/box.cuh"
 #include "gpuspatial/utils/array_view.h"
 #include "gpuspatial/utils/cuda_utils.h"
@@ -229,4 +228,3 @@ class PointArrayView {
   ArrayView<POINT_T> points_;
 };
 }  // namespace gpuspatial
-#endif  // GPUSPATIAL_GEOMS_POINT_CUH

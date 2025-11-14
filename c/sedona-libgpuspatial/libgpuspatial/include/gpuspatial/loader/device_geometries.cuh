@@ -1,5 +1,4 @@
-#ifndef GPU_SPATIAL_LOADER_DEVICE_GEOMETRIES_CUH
-#define GPU_SPATIAL_LOADER_DEVICE_GEOMETRIES_CUH
+#pragma once
 #include "gpuspatial/geom/box.cuh"
 #include "gpuspatial/geom/geometry_type.cuh"
 #include "gpuspatial/geom/multi_line_string.cuh"
@@ -195,4 +194,3 @@ struct DeviceGeometries {
 };
 
 }  // namespace gpuspatial
-#endif  //  GPU_SPATIAL_LOADER_DEVICE_GEOMETRIES_CUH

@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_UTILS_LAUNCHER_H
-#define GPUSPATIAL_UTILS_LAUNCHER_H
+#pragma once
 #include "gpuspatial/utils/cuda_utils.h"
 #include "gpuspatial/utils/exception.h"
 #include "rmm/cuda_stream_view.hpp"
@@ -22,4 +21,3 @@ void LaunchKernel(const rmm::cuda_stream_view& stream, F f, Args&&... args) {
 }
 
 }  // namespace gpuspatial
-#endif  // GPUSPATIAL_UTILS_LAUNCHER_H

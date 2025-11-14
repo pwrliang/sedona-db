@@ -1,9 +1,9 @@
-#ifndef GPUSPATIAL_UTILS_QUEUE_VIEW_H
-#define GPUSPATIAL_UTILS_QUEUE_VIEW_H
-#include <cooperative_groups.h>
+#pragma once
 
 #include "gpuspatial/utils/array_view.h"
 #include "gpuspatial/utils/cuda_utils.h"
+
+#include <cooperative_groups.h>
 
 namespace gpuspatial {
 template <typename T, typename SIZE_T = uint32_t>
@@ -65,4 +65,3 @@ class QueueView {
   SIZE_T* last_pos_{};
 };
 }  // namespace gpuspatial
-#endif  // GPUSPATIAL_UTILS_QUEUE_VIEW_H

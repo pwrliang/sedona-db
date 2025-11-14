@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_GEOM_LINE_SEGMENT_CUH
-#define GPUSPATIAL_GEOM_LINE_SEGMENT_CUH
+#pragma once
 #include "gpuspatial/geom/box.cuh"
 #include "gpuspatial/geom/point.cuh"
 #include "gpuspatial/utils/cuda_utils.h"
@@ -103,4 +102,3 @@ class LineSegment {
 };
 
 }  // namespace gpuspatial
-#endif  //  GPUSPATIAL_GEOM_LINE_SEGMENT_CUH

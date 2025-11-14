@@ -12,8 +12,7 @@
  *
  **********************************************************************/
 
-#ifndef GPUSPATIAL_ORIENTATION_CUH
-#define GPUSPATIAL_ORIENTATION_CUH
+#pragma once
 #include "gpuspatial/utils/cuda_utils.h"
 #include "gpuspatial/utils/dd.h"
 
@@ -203,4 +202,3 @@ class Orientation {
 };
 }  // namespace gpuspatial
 
-#endif  // GPUSPATIAL_ORIENTATION_CUH

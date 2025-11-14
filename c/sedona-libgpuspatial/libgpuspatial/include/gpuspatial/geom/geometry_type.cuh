@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_GEOM_GEOMETRY_TYPE_CUH
-#define GPUSPATIAL_GEOM_GEOMETRY_TYPE_CUH
+#pragma once
 #include <string>
 #include "geoarrow/geoarrow.hpp"
 
@@ -110,4 +109,3 @@ inline GeometryType GetCompatibleGeometryType(GeometryType type1, GeometryType t
   return type1;
 }
 }  // namespace gpuspatial
-#endif  // GPUSPATIAL_GEOM_GEOMETRY_TYPE_CUH

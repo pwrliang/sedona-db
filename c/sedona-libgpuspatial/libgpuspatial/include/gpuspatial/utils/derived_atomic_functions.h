@@ -43,8 +43,7 @@
 //        out warp contention
 //
 
-#ifndef GPUSPATIAL_UTILS_DERIVED_ATOMIC_FUNCTIONS_H
-#define GPUSPATIAL_UTILS_DERIVED_ATOMIC_FUNCTIONS_H
+#pragma once
 #include <cuda.h>
 // Dummy functions for unsupported architecture
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ <= 100)
@@ -270,5 +269,3 @@ __device__ __forceinline__ float atomicAdd(float* address, float val) {
 #endif
 
 #endif
-
-#endif  // GPUSPATIAL_UTILS_DERIVED_ATOMIC_FUNCTIONS_H

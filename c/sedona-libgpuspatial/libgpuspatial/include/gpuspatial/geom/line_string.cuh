@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_GEOM_LINE_STRING_CUH
-#define GPUSPATIAL_GEOM_LINE_STRING_CUH
+#pragma once
 #include "gpuspatial/geom/line_segment.cuh"
 #include "gpuspatial/utils/array_view.h"
 #include "gpuspatial/utils/cuda_utils.h"
@@ -107,5 +106,3 @@ class LineStringArrayView {
 };
 
 }  // namespace gpuspatial
-
-#endif

@@ -1,12 +1,11 @@
-#ifndef GPUSPATIAL_BENCHMARK_STOPWATCH_H
-#define GPUSPATIAL_BENCHMARK_STOPWATCH_H
+#pragma once
 #include <chrono>
 namespace gpuspatial {
 class Stopwatch {
-private:
+ private:
   std::chrono::high_resolution_clock::time_point t1, t2;
 
-public:
+ public:
   explicit Stopwatch(bool run = false) {
     if (run) {
       start();
@@ -17,10 +16,8 @@ public:
   void stop() { t2 = std::chrono::high_resolution_clock::now(); }
 
   double ms() const {
-    return std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1)
-               .count() /
+    return std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count() /
            1000.0;
   }
 };
-}
-#endif // GPUSPATIAL_BENCHMARK_STOPWATCH_H
+}  // namespace gpuspatial

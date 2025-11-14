@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_UTILS_MEM_UTILS_HPP
-#define GPUSPATIAL_UTILS_MEM_UTILS_HPP
+#pragma once
 #include <cuda_runtime.h>
 #include "gpuspatial/utils/exception.h"
 #include "rmm/cuda_stream_view.hpp"
@@ -27,4 +26,3 @@ void async_copy_d2h(const rmm::cuda_stream_view& stream, const T* src, T* dst,
 }
 }  // namespace detail
 }  // namespace gpuspatial
-#endif  // GPUSPATIAL_UTILS_MEM_UTILS_HPP

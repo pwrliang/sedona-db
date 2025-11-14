@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_INDEX_GEOMETRY_GROUPER_HPP
-#define GPUSPATIAL_INDEX_GEOMETRY_GROUPER_HPP
+#pragma once
 #include "gpuspatial/geom/box.cuh"
 #include "gpuspatial/loader/device_geometries.cuh"
 #include "gpuspatial/utils/launcher.h"
@@ -278,4 +277,3 @@ class GeometryGrouper {
 };
 }  // namespace gpuspatial
 
-#endif  // GPUSPATIAL_INDEX_GEOMETRY_GROUPER_HPP

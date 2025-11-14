@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_UTILS_QUEUE_H
-#define GPUSPATIAL_UTILS_QUEUE_H
+#pragma once
 
 #include "gpuspatial/utils/array_view.h"
 #include "gpuspatial/utils/queue_view.h"
@@ -45,21 +44,14 @@ class Queue {
 
   const T* data() const { return data_->data(); }
 
-  // template <typename VECTOR_T>
-  // void CopyTo(VECTOR_T& out, cudaStream_t stream) {
-  //   size_t s = size(stream);
-  //   out = data_;
-  //   out.resize(s);
-  // }
-
   device_t DeviceObject() {
     return device_t(ArrayView<T>(data_->data(), capacity()), counter_->data());
   }
 
-  // void Swap(Queue<T>& rhs) {
-  //   data_.swap(rhs.data_);
-  //   counter_.Swap(rhs.counter_);
-  // }
+  void Swap(Queue<T>& rhs) {
+    data_.swap(rhs.data_);
+    counter_.Swap(rhs.counter_);
+  }
 
   void shrink_to_fit(const rmm::cuda_stream_view& stream) {
     auto s = size(stream);
@@ -75,4 +67,3 @@ class Queue {
 };
 
 }  // namespace gpuspatial
-#endif  // GPUSPATIAL_UTILS_QUEUE_H

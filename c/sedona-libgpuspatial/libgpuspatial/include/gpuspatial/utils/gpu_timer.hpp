@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_UTILS_GPU_TIMER_HPP
-#define GPUSPATIAL_UTILS_GPU_TIMER_HPP
+#pragma once
 #include <cuda_runtime.h>
 #include "gpuspatial/utils/exception.h"
 
@@ -40,4 +39,3 @@ class GPUTimer {
   cudaEvent_t stop_event;
 };
 }  // namespace gpuspatial
-#endif  // GPUSPATIAL_UTILS_GPU_TIMER_HPP

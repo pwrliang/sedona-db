@@ -1,5 +1,4 @@
-#ifndef GPU_SPATIAL_POLYGON_VEW_CUH
-#define GPU_SPATIAL_POLYGON_VEW_CUH
+#pragma once
 #include <cub/block/block_reduce.cuh>
 #include <cub/warp/warp_reduce.cuh>
 
@@ -499,4 +498,3 @@ class PolygonArrayView {
 
 }  // namespace gpuspatial
 
-#endif  // GPU_SPATIAL_POLYGON_VEW_CUH

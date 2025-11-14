@@ -1,12 +1,12 @@
-#ifndef GPUSPATIAL_UTILS_PINNED_VECTOR_H
-#define GPUSPATIAL_UTILS_PINNED_VECTOR_H
-#include <cuda_runtime.h>  // For CUDA memory management functions
-#include <algorithm>       // For std::copy
-#include <cstring>         // For memcpy
-#include <stdexcept>       // For std::out_of_range
-#include <utility>         // For std::move
+#pragma once
 #include "gpuspatial/utils/exception.h"
-#include "rmm/mr/host/pinned_memory_resource.hpp"
+
+#include <cuda_runtime.h>  // For CUDA memory management functions
+
+#include <algorithm>  // For std::copy
+#include <cstring>    // For memcpy
+#include <stdexcept>  // For std::out_of_range
+#include <utility>    // For std::move
 
 namespace gpuspatial {
 
@@ -14,7 +14,8 @@ template <typename T>
 class PinnedVector {
   // Enforce at compile time that this class is only used with types
   // that can be safely copied with memcpy.
-  static_assert(std::is_trivially_copyable<T>::value, "PinnedVector requires a trivially-copyable type.");
+  static_assert(std::is_trivially_copyable<T>::value,
+                "PinnedVector requires a trivially-copyable type.");
 
   T* data_;          // Pointer to the page-locked (pinned) host array
   size_t size_;      // Number of elements currently in the vector
@@ -180,4 +181,3 @@ class PinnedVector {
 };
 
 }  // namespace gpuspatial
-#endif  // GPUSPATIAL_UTILS_PINNED_VECTOR_H

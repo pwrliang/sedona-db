@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_UTILS_TYPE_TRAITS_H
-#define GPUSPATIAL_UTILS_TYPE_TRAITS_H
+#pragma once
 #include <vector_types.h>
 
 namespace gpuspatial {
@@ -52,6 +51,4 @@ struct cuda_vec_info<double3> {
   using scalar_type = double;
   static constexpr int n_dim = 3;
 };
-}
-
-#endif
+}  // namespace gpuspatial

@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_GEOM_BOX_CUH
-#define GPUSPATIAL_GEOM_BOX_CUH
+#pragma once
 #include <optix_types.h>
 #include "gpuspatial/utils/array_view.h"
 #include "gpuspatial/utils/cuda_utils.h"
@@ -204,4 +203,3 @@ class BoxArrayView {
 
 }  // namespace gpuspatial
 
-#endif  // GPUSPATIAL_GEOM_BOX_CUH

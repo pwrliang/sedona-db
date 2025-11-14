@@ -1,8 +1,5 @@
-#ifndef GPUSPATIAL_GEOM_WKBLOADER_H
-#define GPUSPATIAL_GEOM_WKBLOADER_H
+#pragma once
 #include <cassert>
-
-// #include "gpuspatial/loader/geometry_segment.h"
 
 #include "device_geometries.cuh"
 #include "gpuspatial/geom/box.cuh"
@@ -235,4 +232,3 @@ class WKBLoader {
   }
 };
 }  // namespace gpuspatial
-#endif  // GPUSPATIAL_GEOM_WKBLOADER_H

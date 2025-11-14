@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_LOADER_GEOMETRY_ARRAY_H
-#define GPUSPATIAL_LOADER_GEOMETRY_ARRAY_H
+#pragma once
 #include <cassert>
 #include <vector>
 
@@ -1403,4 +1402,3 @@ inline std::shared_ptr<GeometrySegment> CreateGeometrySegment(GeometryType type)
 
 }  // namespace gpuspatial
 
-#endif  //  GPUSPATIAL_LOADER_GEOMETRY_ARRAY_H

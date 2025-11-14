@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_INDEX_STREAMING_JOINER_HPP
-#define GPUSPATIAL_INDEX_STREAMING_JOINER_HPP
+#pragma once
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -80,4 +79,3 @@ class StreamingJoiner {
 };
 
 }  // namespace gpuspatial
-#endif  // GPUSPATIAL_INDEX_STREAMING_JOINER_HPP

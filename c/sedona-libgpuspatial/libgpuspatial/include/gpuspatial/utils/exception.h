@@ -26,8 +26,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //
 
-#ifndef GPUSPATIAL_UTILS_EXCEPTION_H
-#define GPUSPATIAL_UTILS_EXCEPTION_H
+#pragma once
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <optix.h>
@@ -206,4 +205,3 @@ inline void assertCondMsg(bool result, const char* cond, const std::string& msg,
 
 }  // namespace gpuspatial
 
-#endif  // GPUSPATIAL_UTILS_EXCEPTION_H
