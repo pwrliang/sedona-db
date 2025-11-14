@@ -13,12 +13,13 @@
 #include "gpuspatial/utils/queue.h"
 #include "gpuspatial/utils/thread_pool.h"
 
+#include "rmm/cuda_stream_pool.hpp"
+#include "rmm/cuda_stream_view.hpp"
+#include "rmm/device_uvector.hpp"
+
 #include <fstream>
 #include <thread>
 
-#include <rmm/cuda_stream_pool.hpp>
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
 
 // #define GPUSPATIAL_PROFILING
 namespace gpuspatial {

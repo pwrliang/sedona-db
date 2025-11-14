@@ -1,7 +1,4 @@
 #pragma once
-#include <thrust/scan.h>
-#include <thread>
-#include <unordered_set>
 
 #include "gpuspatial/geom/geometry_type.cuh"
 #include "gpuspatial/loader/device_geometries.cuh"
@@ -11,10 +8,16 @@
 #include "gpuspatial/utils/thread_pool.h"
 
 #include "nanoarrow/nanoarrow.h"
+
 #include "rmm/cuda_stream_view.hpp"
 #include "rmm/device_uvector.hpp"
 #include "rmm/exec_policy.hpp"
 #include "rmm/mr/device/managed_memory_resource.hpp"
+
+#include <thrust/scan.h>
+
+#include <thread>
+#include <unordered_set>
 
 namespace gpuspatial {
 namespace detail {

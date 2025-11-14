@@ -1,6 +1,8 @@
 #pragma once
-#include <string>
+
 #include "geoarrow/geoarrow.hpp"
+
+#include <string>
 
 namespace gpuspatial {
 // N.B. The order of this enum must match GeoArrowGeometryType

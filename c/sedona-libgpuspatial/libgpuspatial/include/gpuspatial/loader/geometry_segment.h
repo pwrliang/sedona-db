@@ -1,8 +1,5 @@
 #pragma once
-#include <cassert>
-#include <vector>
 
-#include "geoarrow/geoarrow.hpp"
 #include "gpuspatial/geom/box.cuh"
 #include "gpuspatial/geom/geometry_collection.cuh"
 #include "gpuspatial/geom/geometry_type.cuh"
@@ -11,12 +8,16 @@
 #include "gpuspatial/utils/mem_utils.hpp"
 #include "gpuspatial/utils/pinned_vector.h"
 
+#include "geoarrow/geoarrow.hpp"
+
+#include "rmm/cuda_stream_view.hpp"
+#include "rmm/device_uvector.hpp"
+#include "rmm/exec_policy.hpp"
+
 #include <thrust/scan.h>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
-
+#include <cassert>
+#include <vector>
 namespace gpuspatial {
 namespace detail {
 static uint64_t bswap_64(uint64_t x) {
@@ -1401,4 +1402,3 @@ inline std::shared_ptr<GeometrySegment> CreateGeometrySegment(GeometryType type)
 }
 
 }  // namespace gpuspatial
-

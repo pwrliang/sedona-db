@@ -4,15 +4,15 @@
 #include "gpuspatial/utils/launcher.h"
 #include "gpuspatial/utils/morton_code.h"
 
-#include <memory>
-
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
+#include "rmm/cuda_stream_view.hpp"
+#include "rmm/device_uvector.hpp"
+#include "rmm/exec_policy.hpp"
 
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
 #include <thrust/transform_reduce.h>
+
+#include <memory>
 
 namespace gpuspatial {
 template <typename POINT_T, typename INDEX_T>
@@ -276,4 +276,3 @@ class GeometryGrouper {
   std::unique_ptr<rmm::device_uvector<INDEX_T>> reordered_indices_;
 };
 }  // namespace gpuspatial
-

@@ -1,10 +1,11 @@
 #pragma once
+#include "gpuspatial/relate/predicate.cuh"
+
+#include "nanoarrow/nanoarrow.hpp"
+
 #include <memory>
 #include <stdexcept>
 #include <vector>
-#include "gpuspatial/relate/predicate.cuh"
-#include "nanoarrow/nanoarrow.hpp"
-
 namespace gpuspatial {
 
 class StreamingJoiner {

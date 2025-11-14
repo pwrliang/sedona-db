@@ -18,7 +18,7 @@
 
 #include "gpuspatial/logger_macros.hpp"
 
-#include <rapids_logger/logger.hpp>
+#include "rapids_logger/logger.hpp"
 
 namespace gpuspatial {
 

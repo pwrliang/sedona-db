@@ -1,8 +1,9 @@
 #pragma once
-#include <cuda_runtime.h>
 #include "gpuspatial/utils/exception.h"
+
 #include "rmm/cuda_stream_view.hpp"
 
+#include <cuda_runtime.h>
 namespace gpuspatial {
 namespace detail {
 template <typename T>

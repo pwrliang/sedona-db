@@ -1,7 +1,7 @@
 #pragma once
-#include <cuda_runtime.h>
 #include "gpuspatial/utils/exception.h"
 
+#include <cuda_runtime.h>
 namespace gpuspatial {
 // A simple utility class for timing CUDA kernels.
 class GPUTimer {

@@ -2,24 +2,44 @@
 
 #include "gpuspatial/utils/array_view.h"
 
+#include "rmm/cuda_stream.hpp"
+#include "rmm/device_uvector.hpp"
+
 #include <optix_host.h>
 #include <optix_types.h>
 
 #include <thrust/device_vector.h>
-#include <rmm/cuda_stream.hpp>
-#include <rmm/device_uvector.hpp>
 
 #include <map>
-#include <memory>
 #include <string>
 #include <vector>
-
-#include "gpuspatial/index/detail/sbt_record.h"
 
 #define GPUSPATIAL_OPTIX_LAUNCH_PARAMS_NAME "params"
 
 namespace gpuspatial {
 namespace details {
+
+/*! SBT record for a raygen program */
+struct __align__(OPTIX_SBT_RECORD_ALIGNMENT) RaygenRecord {
+  __align__(OPTIX_SBT_RECORD_ALIGNMENT) char header[OPTIX_SBT_RECORD_HEADER_SIZE];
+  // just a dummy value - later examples will use more interesting
+  // data here
+  void* data;
+};
+
+/*! SBT record for a miss program */
+struct __align__(OPTIX_SBT_RECORD_ALIGNMENT) MissRecord {
+  __align__(OPTIX_SBT_RECORD_ALIGNMENT) char header[OPTIX_SBT_RECORD_HEADER_SIZE];
+  // just a dummy value - later examples will use more interesting
+  // data here
+  void* data;
+};
+
+/*! SBT record for a hitgroup program */
+struct __align__(OPTIX_SBT_RECORD_ALIGNMENT) HitgroupRecord {
+  __align__(OPTIX_SBT_RECORD_ALIGNMENT) char header[OPTIX_SBT_RECORD_HEADER_SIZE];
+  void* data;
+};
 
 #define MODULE_ENABLE_MISS (1 << 0)
 #define MODULE_ENABLE_CH (1 << 1)

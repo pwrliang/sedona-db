@@ -1,14 +1,14 @@
 #pragma once
 
-#include <thrust/pair.h>
 #include "gpuspatial/geom/box.cuh"
 #include "gpuspatial/geom/multi_point.cuh"
 #include "gpuspatial/geom/multi_polygon.cuh"
 #include "gpuspatial/geom/point.cuh"
 #include "gpuspatial/geom/polygon.cuh"
-#include "gpuspatial/geom/ray_crossing_counter.cuh"
 #include "gpuspatial/utils/array_view.h"
 #include "gpuspatial/utils/queue_view.h"
+
+#include <thrust/pair.h>
 
 namespace gpuspatial {
 namespace detail {

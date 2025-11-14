@@ -1,6 +1,7 @@
 #pragma once
 #include "gpuspatial/utils/cuda_utils.h"
 #include "gpuspatial/utils/exception.h"
+
 #include "rmm/cuda_stream_view.hpp"
 
 namespace gpuspatial {

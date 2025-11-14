@@ -1,5 +1,4 @@
 #pragma once
-
 #include "gpuspatial/utils/array_view.h"
 #include "gpuspatial/utils/queue_view.h"
 

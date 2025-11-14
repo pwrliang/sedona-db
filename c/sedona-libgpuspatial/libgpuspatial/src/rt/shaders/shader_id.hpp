@@ -1,10 +1,8 @@
-#ifndef GPUSPATIAL_INDEX_DETAIL_SHADER_NAME_HPP
-#define GPUSPATIAL_INDEX_DETAIL_SHADER_NAME_HPP
+#pragma once
+
 #include <string>
 #include <type_traits>
 
-#include "gpuspatial/relate/predicate.cuh"
-#include "rt/shaders/shader_config.h"
 namespace gpuspatial {
 namespace detail {
 
@@ -78,4 +76,3 @@ inline std::string GetMultiPolygonPointQueryShaderId() {
   return detail::GetShaderPointTypeId<POINT_T>() + "_multipolygon_point_query.ptx";
 }
 }  // namespace gpuspatial
-#endif  //  GPUSPATIAL_INDEX_DETAIL_SHADER_NAME_HPP

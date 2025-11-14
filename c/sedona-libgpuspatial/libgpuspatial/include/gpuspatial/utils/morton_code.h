@@ -19,13 +19,14 @@
  */
 
 #pragma once
-// adopt from https://github.com/ToruNiina/lbvh
+#include "gpuspatial/utils/cuda_utils.h"
+
 #include <vector_types.h>
 #include <cuda/std/cmath>
-#include "gpuspatial/utils/cuda_utils.h"
 
 namespace gpuspatial {
 namespace detail {
+// adopt from https://github.com/ToruNiina/lbvh
 /**
  * @ brief Spreads the lower 10 bits of v to every third bit for 3D interleaving.
  */

@@ -1,11 +1,12 @@
 #pragma once
 #include <cassert>
 
-#include "device_geometries.cuh"
 #include "gpuspatial/geom/box.cuh"
 #include "gpuspatial/geom/geometry_type.cuh"
+#include "gpuspatial/loader/device_geometries.cuh"
 
 #include "geoarrow/geoarrow.hpp"
+
 #include "nanoarrow/nanoarrow.h"
 #include "nanoarrow/nanoarrow.hpp"
 namespace gpuspatial {

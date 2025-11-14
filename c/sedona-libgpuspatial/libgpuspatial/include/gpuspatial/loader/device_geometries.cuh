@@ -6,6 +6,7 @@
 #include "gpuspatial/geom/multi_polygon.cuh"
 #include "gpuspatial/geom/polygon.cuh"
 #include "gpuspatial/utils/array_view.h"
+
 #include "rmm/device_uvector.hpp"
 
 namespace gpuspatial {

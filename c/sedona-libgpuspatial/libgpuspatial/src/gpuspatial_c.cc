@@ -1,7 +1,8 @@
 #include "gpuspatial/gpuspatial_c.h"
+#include "gpuspatial/index/spatial_joiner.hpp"
+
 #include <threads.h>
 #include <memory>
-#include "gpuspatial/index/spatial_joiner.hpp"
 #define GPUSPATIAL_ERROR_MSG_BUFFER_SIZE (1024)
 
 struct GpuSpatialJoinerExporter {

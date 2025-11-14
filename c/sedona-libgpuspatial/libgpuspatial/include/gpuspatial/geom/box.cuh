@@ -1,8 +1,10 @@
 #pragma once
-#include <optix_types.h>
+
 #include "gpuspatial/utils/array_view.h"
 #include "gpuspatial/utils/cuda_utils.h"
 #include "gpuspatial/utils/helpers.h"
+
+#include <optix_types.h>
 
 namespace gpuspatial {
 template <typename POINT_T>
@@ -202,4 +204,3 @@ class BoxArrayView {
 };
 
 }  // namespace gpuspatial
-

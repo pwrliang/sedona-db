@@ -15,11 +15,11 @@
  */
 #pragma once
 
+#include "gpuspatial/utils/cuda_utils.h"
+
 #include <cmath>
 #include <cstdint>
 #include <type_traits>
-#include "gpuspatial/utils/cuda_utils.h"
-
 namespace gpuspatial {
 
 constexpr unsigned default_max_ulp = 4;

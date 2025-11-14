@@ -1,5 +1,4 @@
-#ifndef GPUSPATIAL_INDEX_SHADERS_SHADER_CONFIG_H
-#define GPUSPATIAL_INDEX_SHADERS_SHADER_CONFIG_H
+#pragma once
 
 #include "gpuspatial/geom/point.cuh"
 
@@ -27,5 +26,3 @@ using ShaderIndexType = uint64_t;
 
 
 }  // namespace gpuspatial
-
-#endif  // GPUSPATIAL_INDEX_SHADERS_SHADER_CONFIG_H

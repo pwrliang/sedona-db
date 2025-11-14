@@ -1,11 +1,11 @@
 #pragma once
+#include "gpuspatial/utils/cuda_utils.h"
+
 #include <cassert>
 #include <climits>
 #include <cmath>
 #include <limits>
 #include <type_traits>
-
-#include "gpuspatial/utils/cuda_utils.h"
 
 namespace gpuspatial {
 // Adapted from
@@ -58,4 +58,3 @@ DEV_HOST_INLINE void pack64(T* t, unsigned int& i0, unsigned int& i1) {
 }
 
 }  // namespace gpuspatial
-

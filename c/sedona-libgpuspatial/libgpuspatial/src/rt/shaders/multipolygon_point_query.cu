@@ -1,12 +1,13 @@
-#include <cuda_runtime.h>
-#include <optix_device.h>
-#include <cfloat>
-
 #include "gpuspatial/geom/line_segment.cuh"
+#include "gpuspatial/geom/ray_crossing_counter.cuh"
 #include "gpuspatial/index/detail/launch_parameters.h"
 #include "gpuspatial/relate/relate.cuh"
 #include "gpuspatial/utils/floating_point.h"
 #include "shader_config.h"
+
+#include <cuda_runtime.h>
+#include <optix_device.h>
+#include <cfloat>
 
 enum { SURFACE_RAY_TYPE = 0, RAY_TYPE_COUNT };
 // FLOAT_TYPE is defined by CMakeLists.txt

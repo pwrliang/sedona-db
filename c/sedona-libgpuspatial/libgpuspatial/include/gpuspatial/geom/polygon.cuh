@@ -1,8 +1,4 @@
 #pragma once
-#include <cub/block/block_reduce.cuh>
-#include <cub/warp/warp_reduce.cuh>
-
-#include <thrust/binary_search.h>
 
 #include "gpuspatial/geom/box.cuh"
 #include "gpuspatial/geom/line_string.cuh"
@@ -10,6 +6,11 @@
 #include "gpuspatial/utils/array_view.h"
 #include "gpuspatial/utils/cuda_utils.h"
 #include "gpuspatial/utils/floating_point.h"
+
+#include <cub/block/block_reduce.cuh>
+#include <cub/warp/warp_reduce.cuh>
+
+#include <thrust/binary_search.h>
 
 namespace gpuspatial {
 
@@ -497,4 +498,3 @@ class PolygonArrayView {
 };
 
 }  // namespace gpuspatial
-
