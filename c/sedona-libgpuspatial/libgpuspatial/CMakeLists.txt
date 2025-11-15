@@ -14,7 +14,6 @@ message(STATUS "Building using CMake version: ${CMAKE_VERSION}")
 set(CMAKE_CXX_STANDARD 17)
 
 option(GPUSPATIAL_BUILD_TESTS "Build tests" OFF)
-option(GPUSPATIAL_BUILD_BENCHMARK "Build benchmarks" OFF)
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 
 include(cmake/rapids_config.cmake)
@@ -170,7 +169,7 @@ rapids_export(
         VERSION ${PROJECT_VERSION}
         NAMESPACE gpuspatial::)
 
-if (GPUSPATIAL_BUILD_TESTS OR GPUSPATIAL_BUILD_BENCHMARK)
+if (GPUSPATIAL_BUILD_TESTS)
     FetchContent_Declare(
             geos
             URL https://github.com/libgeos/geos/archive/refs/tags/3.13.1.zip
@@ -181,8 +180,7 @@ if (GPUSPATIAL_BUILD_TESTS OR GPUSPATIAL_BUILD_BENCHMARK)
 
     FetchContent_MakeAvailable(geos)
 
-    include_directories(thirdparty)
-    add_library(geoarrow_geos thirdparty/geoarrow_geos/geoarrow_geos.c)
+    add_library(geoarrow_geos test/geoarrow_geos/geoarrow_geos.c)
     target_link_libraries(
             geoarrow_geos
             PUBLIC GEOS::geos_c
@@ -233,33 +231,4 @@ if (GPUSPATIAL_BUILD_TESTS)
     gtest_discover_tests(joiner_test)
     gtest_discover_tests(index_test)
     gtest_discover_tests(relate_test)
-endif ()
-
-
-if (GPUSPATIAL_BUILD_BENCHMARK)
-    find_package(gflags CONFIG REQUIRED)
-    find_package(nlohmann_json CONFIG REQUIRED)
-
-    find_package(Arrow REQUIRED)
-    find_package(Parquet REQUIRED)
-    set(BOOST_INCLUDE_LIBRARIES math geometry)
-    FetchContent_Declare(
-            Boost
-            URL https://github.com/boostorg/boost/releases/download/boost-1.84.0/boost-1.84.0.tar.xz
-            URL_MD5 893b5203b862eb9bbd08553e24ff146a
-            DOWNLOAD_EXTRACT_TIMESTAMP ON
-    )
-    FetchContent_MakeAvailable(Boost)
-
-    add_executable(benchmark benchmark/benchmark.cpp
-            benchmark/run_queries.cu
-            benchmark/flags.cpp
-            #            benchmark/baseline/boost_index.cpp
-            benchmark/baseline/geos_index.cpp
-            #            benchmark/baseline/wkb.cpp
-    )
-    target_link_libraries(benchmark PRIVATE cuda geoarrow gpuspatial GEOS::geos GEOS::geos_c geoarrow_geos gflags
-            Arrow::arrow_static Parquet::parquet_static nlohmann_json::nlohmann_json Boost::geometry)
-    target_include_directories(benchmark PRIVATE ${CUDAToolkit_INCLUDE_DIRS} thirdparty benchmark)
-    target_compile_options(benchmark PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda --expt-relaxed-constexpr>)
 endif ()
