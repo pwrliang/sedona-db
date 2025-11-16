@@ -23,7 +23,7 @@ on:
       - main
       - 'branch-*'
     tags:
-      - 'apache-sedona-db-*-rc*'
+        - 'apache-sedona-db-*-rc*'
   pull_request:
     branches:
       - main
@@ -115,11 +115,11 @@ jobs:
 
       - name: Install docs requirements
         run: |
-          pip install -r docs/requirements.txt
+            pip install -r docs/requirements.txt
 
       - name: Install dev SedonaDB Python
         run: |
-          pip install python/sedonadb/ -vv
+            pip install python/sedonadb/ -vv
 
       - name: Build documentation
         run: |
