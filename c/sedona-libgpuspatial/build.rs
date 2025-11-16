@@ -50,7 +50,7 @@ fn main() {
             .define("CMAKE_CUDA_ARCHITECTURES", "86")
             .define("CMAKE_POLICY_VERSION_MINIMUM", "3.5")  // Allow older CMake versions
             .define("CMAKE_BUILD_TYPE", "Release") // Set build type to Debug or Release
-            .define("LIBGPUSPATIAL_LOGGING_LEVEL", "INFO") // Set logging level
+            .define("LIBGPUSPATIAL_LOGGING_LEVEL", "WARN") // Set logging level
             .build();
         let include_path = dst.join("include");
         println!(

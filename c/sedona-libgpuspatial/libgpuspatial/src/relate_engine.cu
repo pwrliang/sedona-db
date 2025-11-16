@@ -177,6 +177,17 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
   GPUSPATIAL_LOG_INFO(
       "Refine with generic kernel, geom1 %zu, geom2 %zu, predicate %s, result size %zu",
       geom_array1.size(), geom_array2.size(), PredicateToString(predicate), ids_size);
+  if (std::is_same_v<GEOM1_ARRAY_VIEW_T, PolygonArrayView<POINT_T, INDEX_T>> &&
+          std::is_same_v<GEOM2_ARRAY_VIEW_T, PolygonArrayView<POINT_T, INDEX_T>> ||
+      std::is_same_v<GEOM1_ARRAY_VIEW_T, PolygonArrayView<POINT_T, INDEX_T>> &&
+          std::is_same_v<GEOM2_ARRAY_VIEW_T, MultiPolygonArrayView<POINT_T, INDEX_T>> ||
+      std::is_same_v<GEOM1_ARRAY_VIEW_T, MultiPolygonArrayView<POINT_T, INDEX_T>> &&
+          std::is_same_v<GEOM2_ARRAY_VIEW_T, PolygonArrayView<POINT_T, INDEX_T>> ||
+      std::is_same_v<GEOM1_ARRAY_VIEW_T, MultiPolygonArrayView<POINT_T, INDEX_T>> &&
+          std::is_same_v<GEOM2_ARRAY_VIEW_T, MultiPolygonArrayView<POINT_T, INDEX_T>>) {
+    GPUSPATIAL_LOG_WARN(
+        "Evaluate Polygon-Polygon relate with the GPU, which is not well-tested and the performance may be poor.");
+  }
   auto end = thrust::remove_if(
       rmm::exec_policy_nosync(stream), ids.data(), ids.data() + ids_size,
       [=] __device__(const thrust::pair<uint32_t, uint32_t>& pair) {
@@ -341,9 +352,11 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
 
   rmm::device_uvector<uint32_t> poly_ids(ids_size, stream);
 
-  thrust::transform(
-      rmm::exec_policy_nosync(stream), ids.data(), ids.data() + ids_size, poly_ids.data(),
-      [] __device__(const thrust::pair<uint32_t, uint32_t>& pair) { return pair.second; });
+  thrust::transform(rmm::exec_policy_nosync(stream), ids.data(), ids.data() + ids_size,
+                    poly_ids.data(),
+                    [] __device__(const thrust::pair<uint32_t, uint32_t>& pair) {
+                      return pair.second;
+                    });
   auto poly_ids_end =
       thrust::unique(rmm::exec_policy_nosync(stream), poly_ids.begin(), poly_ids.end());
   poly_ids.resize(thrust::distance(poly_ids.begin(), poly_ids_end), stream);
