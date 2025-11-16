@@ -2,13 +2,6 @@
   "name": "libgpuspatial",
   "version-string": "1.0.0",
   "dependencies": [
-    "nlohmann-json",
-    "gflags",
-    "gtest",
-    "zstd",
-    {
-      "name": "arrow",
-      "features": ["s3"]
-    }
+    "gtest"
   ]
 }

@@ -80,6 +80,23 @@ sd_view <- function(table_ref) {
   new_sedonadb_dataframe(ctx, df)
 }
 
+#' Register a user-defined function
+#'
+#' Several types of user-defined functions can be registered into a session
+#' context. Currently, the only implemented variety is an external pointer
+#' to a Rust `FFI_ScalarUDF`, an example of which is available from the
+#' [DataFusion Python documentation](https://github.com/apache/datafusion-python/blob/6f3b1cab75cfaa0cdf914f9b6fa023cb9afccd7d/examples/datafusion-ffi-example/src/scalar_udf.rs).
+#'
+#' @param udf An object of class 'datafusion_scalar_udf'
+#'
+#' @returns NULL, invisibly
+#' @export
+#'
+sd_register_udf <- function(udf) {
+  ctx <- ctx()
+  ctx$register_scalar_udf(udf)
+}
+
 # We use just one context for now. In theory we could support multiple
 # contexts with a shared runtime, which would scope the registration
 # of various components more cleanly from the runtime.

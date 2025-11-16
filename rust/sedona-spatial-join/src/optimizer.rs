@@ -39,6 +39,7 @@ use datafusion_physical_expr::{PhysicalExpr, ScalarFunctionExpr};
 use datafusion_physical_plan::coalesce_partitions::CoalescePartitionsExec;
 use datafusion_physical_plan::joins::utils::ColumnIndex;
 use datafusion_physical_plan::joins::{HashJoinExec, NestedLoopJoinExec};
+use datafusion_physical_plan::projection::ProjectionExec;
 use datafusion_physical_plan::{joins::utils::JoinFilter, ExecutionPlan};
 use sedona_common::{option::SedonaOptions, sedona_internal_err};
 use sedona_expr::utils::{parse_distance_predicate, ParsedDistancePredicate};
@@ -132,7 +133,8 @@ impl OptimizerRule for SpatialJoinOptimizer {
         plan: LogicalPlan,
         config: &dyn OptimizerConfig,
     ) -> Result<Transformed<LogicalPlan>> {
-        let Some(extension) = config.options().extensions.get::<SedonaOptions>() else {
+        let options = config.options();
+        let Some(extension) = options.extensions.get::<SedonaOptions>() else {
             return Ok(Transformed::no(plan));
         };
         if !extension.spatial_join.enable {
@@ -525,9 +527,6 @@ impl SpatialJoinOptimizer {
         expected_schema: &SchemaRef,
         spatial_schema: &SchemaRef,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        use datafusion_physical_expr::expressions::Column;
-        use datafusion_physical_plan::projection::ProjectionExec;
-
         // The challenge is to map from the expected HashJoinExec schema to SpatialJoinExec schema
         //
         // Expected schema has fields like: [id, name, name] (with duplicates)
@@ -1362,7 +1361,7 @@ mod tests {
     use arrow::datatypes::{DataType, Field, Schema};
     use datafusion_common::{JoinSide, ScalarValue};
     use datafusion_expr::Operator;
-    use datafusion_expr::{ColumnarValue, ScalarUDF, SimpleScalarUDF};
+    use datafusion_expr::{col, lit, ColumnarValue, Expr, ScalarUDF, SimpleScalarUDF};
     use datafusion_physical_expr::expressions::{BinaryExpr, Column, IsNotNullExpr, Literal};
     use datafusion_physical_expr::{PhysicalExpr, ScalarFunctionExpr};
     use datafusion_physical_plan::joins::utils::ColumnIndex;
@@ -1463,11 +1462,14 @@ mod tests {
     ) -> Arc<ScalarFunctionExpr> {
         let return_type = udf.return_type(&[]).unwrap();
         let field = Arc::new(arrow::datatypes::Field::new("result", return_type, false));
+        // TODO: Pipe actual ConfigOptions from session instead of using defaults
+        // See: https://github.com/apache/sedona-db/issues/248
         Arc::new(ScalarFunctionExpr::new(
             udf.name(),
             Arc::clone(&udf),
             args,
             field,
+            Arc::new(ConfigOptions::default()),
         ))
     }
 
@@ -3013,9 +3015,6 @@ mod tests {
 
     #[test]
     fn test_is_spatial_predicate() {
-        use datafusion_expr::ColumnarValue;
-        use datafusion_expr::{col, lit, Expr, ScalarUDF, SimpleScalarUDF};
-
         // Test 1: ST_ functions should return true
         let st_intersects_udf = create_dummy_st_intersects_udf();
         let st_intersects_expr = Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction {

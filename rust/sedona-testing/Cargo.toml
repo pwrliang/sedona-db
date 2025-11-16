@@ -43,6 +43,7 @@ criterion = { workspace = true, optional = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-physical-expr = { workspace = true }
+fastrand = { workspace = true }
 geo-traits = { workspace = true, features = ["geo-types"] }
 geo-types = { workspace = true }
 parquet = { workspace = true, features = ["arrow", "snap", "zstd"] }
@@ -50,6 +51,7 @@ rand = { workspace = true }
 sedona-common = { path = "../sedona-common" }
 sedona-geometry = { path = "../sedona-geometry" }
 sedona-expr = { path = "../sedona-expr" }
+sedona-raster = { path = "../sedona-raster" }
 sedona-schema = { path = "../sedona-schema" }
 wkb = { workspace = true }
 wkt = { workspace = true }

@@ -24,16 +24,17 @@ use geos::{Geom, PreparedGeometry};
 use parking_lot::Mutex;
 use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions};
 use sedona_expr::statistics::GeoStatistics;
-use wkb::reader::{to_geos::GEOSWkbFactory, Wkb};
+use sedona_geos::wkb_to_geos::GEOSWkbFactory;
+use wkb::reader::Wkb;
 
 use crate::{
     index::IndexQueryResult,
-    init_once_array::InitOnceArray,
     refine::{
         exec_mode_selector::{get_or_update_execution_mode, ExecModeSelector, SelectOptimalMode},
         IndexQueryResultRefiner,
     },
     spatial_predicate::{RelationPredicate, SpatialPredicate, SpatialRelationType},
+    utils::init_once_array::InitOnceArray,
 };
 
 /// GEOS-specific optimal mode selector that chooses the best execution mode
@@ -282,9 +283,7 @@ impl GeosRefiner {
                 continue;
             };
             if is_newly_created {
-                // TODO: This ia a rough estimate of the memory usage of the prepared geometry and
-                // may not be accurate.
-                let prep_geom_size = index_result.wkb.buf().len() * 4;
+                let prep_geom_size = estimate_prep_geom_in_mem_size(index_result.wkb);
                 self.mem_usage.fetch_add(prep_geom_size, Ordering::Relaxed);
             }
             if self.evaluator.evaluate_prepare_build(
@@ -318,6 +317,13 @@ impl GeosRefiner {
         }
         Ok(build_batch_positions)
     }
+}
+
+fn estimate_prep_geom_in_mem_size(wkb: &Wkb<'_>) -> usize {
+    // TODO: This is a rough estimate of the memory usage of the prepared geometry and
+    // may not be accurate.
+    // https://github.com/apache/sedona-db/issues/281
+    wkb.buf().len() * 4
 }
 
 impl IndexQueryResultRefiner for GeosRefiner {

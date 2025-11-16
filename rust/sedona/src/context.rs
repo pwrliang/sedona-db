@@ -17,6 +17,7 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use crate::exec::create_plan_from_sql;
+use crate::object_storage::ensure_object_store_registered_with_options;
 use crate::{
     catalog::DynamicObjectStoreCatalog,
     random_geometry_provider::RandomGeometryFunction,
@@ -139,6 +140,10 @@ impl SedonaContext {
         #[cfg(feature = "geos")]
         out.register_scalar_kernels(sedona_geos::register::scalar_kernels().into_iter())?;
 
+        // Register geos aggregate kernels if built with geos support
+        #[cfg(feature = "geos")]
+        out.register_aggregate_kernels(sedona_geos::register::aggregate_kernels().into_iter())?;
+
         // Register geo kernels if built with geo support
         #[cfg(feature = "geo")]
         out.register_scalar_kernels(sedona_geo::register::scalar_kernels().into_iter())?;
@@ -158,6 +163,9 @@ impl SedonaContext {
         // without this feature unless sedona_proj::register::configure_global_proj_engine()
         // is called).
         out.register_scalar_kernels(sedona_proj::register::scalar_kernels().into_iter())?;
+
+        // Always register raster functions
+        out.register_function_set(sedona_raster_functions::register::default_function_set());
 
         Ok(out)
     }
@@ -240,7 +248,6 @@ impl SedonaContext {
 
         // Pre-register object store with our custom options before creating GeoParquetReadOptions
         if !urls.is_empty() {
-            use crate::object_storage::ensure_object_store_registered_with_options;
             // Extract the table options from GeoParquetReadOptions for object store registration
             let table_options_map = options.table_options().cloned().unwrap_or_default();
 
@@ -550,7 +557,7 @@ mod tests {
                     "|   plan_type   |               plan              |",
                     "+---------------+---------------------------------+",
                     "| logical_plan  | Projection: Int64(1) AS one     |",
-                    "|               |   EmptyRelation                 |",
+                    "|               |   EmptyRelation: rows=1         |",
                     "| physical_plan | ProjectionExec: expr=[1 as one] |",
                     "|               |   PlaceholderRowExec            |",
                     "|               |                                 |",

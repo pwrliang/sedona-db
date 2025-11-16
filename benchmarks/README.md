@@ -28,6 +28,12 @@ Install pytest-benchmark:
 pip install pytest-benchmark
 ```
 
+Please also remember to install sedonadb in release mode and not debug mode (avoid using the `-e` mentioned in the development docs). Currently we also need to include the test dependencies.
+
+```bash
+pip install "python/sedonadb[test]"
+```
+
 ### Running benchmarks
 
 The below commands assume your working directory is in `benchmarks`.
@@ -79,3 +85,34 @@ test_st_buffer[collections_simple-PostGIS]      855.3329 (9.96)     854.7194 (9.
 ```
 
 For more details and command line options, refer to the official [pytest-benchmark documentation](https://pytest-benchmark.readthedocs.io/en/latest/usage.html)
+
+### Adding New Benchmarks
+
+There are two types of engines, each type serving a different purpose:
+
+- `SedonaDBSingleThread`, `DuckDBSingleThread`, `PostGISSingleThread`:
+  Micro / UDF benchmarks that measure the per-function cost (e.g. ST_Area, ST_Contains). These should run engines in a comparable, single-thread style configuration (where possible) to make function-level performance differences clearer.
+- `SedonaDB`, `DuckDB`, `PostGIS`:
+  Macro / complex query benchmarks (e.g. KNN joins) that represent perceived end-user performance. Engines run with their default / natural configuration (multi-threading, internal parallelism, etc.).
+
+Please choose the appropriate engines when adding a new benchmark. All existing benchmarks have been annotated accordingly.
+
+Example (UDF micro benchmark in single-thread mode):
+```python
+import pytest
+from sedonadb.testing import SedonaDBSingleThread, DuckDBSingleThread, PostGISSingleThread
+
+@pytest.mark.parametrize("eng", [SedonaDBSingleThread, PostGISSingleThread, DuckDBSingleThread])
+def test_st_area(benchmark, eng):
+    ...
+```
+
+Example (Query / macro benchmark in default mode):
+```python
+import pytest
+from sedonadb.testing import SedonaDB, DuckDB, PostGIS
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
+def test_knn_performance(benchmark, eng):
+    ...
+```

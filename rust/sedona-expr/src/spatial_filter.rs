@@ -177,7 +177,7 @@ impl SpatialFilter {
         let args = parse_args(raw_args);
         let fun_name = scalar_fun.fun().name();
         match fun_name {
-            "st_intersects" | "st_equals" | "st_touches" => {
+            "st_intersects" | "st_touches" | "st_crosses" | "st_overlaps" => {
                 if args.len() != 2 {
                     return sedona_internal_err!("unexpected argument count in filter evaluation");
                 }
@@ -191,6 +191,28 @@ impl SpatialFilter {
                         match literal_bounds(literal) {
                             Ok(literal_bounds) => {
                                 Ok(Some(Self::Intersects(column.clone(), literal_bounds)))
+                            }
+                            Err(e) => Err(DataFusionError::External(Box::new(e))),
+                        }
+                    }
+                    // Not between a literal and a column
+                    _ => Ok(Some(Self::Unknown)),
+                }
+            }
+            "st_equals" => {
+                if args.len() != 2 {
+                    return sedona_internal_err!("unexpected argument count in filter evaluation");
+                }
+
+                match (&args[0], &args[1]) {
+                    (ArgRef::Col(column), ArgRef::Lit(literal))
+                    | (ArgRef::Lit(literal), ArgRef::Col(column)) => {
+                        if !is_prunable_geospatial_literal(literal) {
+                            return Ok(Some(Self::Unknown));
+                        }
+                        match literal_bounds(literal) {
+                            Ok(literal_bounds) => {
+                                Ok(Some(Self::Covers(column.clone(), literal_bounds)))
                             }
                             Err(e) => Err(DataFusionError::External(Box::new(e))),
                         }
@@ -380,6 +402,7 @@ fn parse_args(args: &[Arc<dyn PhysicalExpr>]) -> Vec<ArgRef<'_>> {
 #[cfg(test)]
 mod test {
     use arrow_schema::{DataType, Field};
+    use datafusion_common::config::ConfigOptions;
     use datafusion_expr::{ScalarUDF, Signature, SimpleScalarUDF, Volatility};
     use rstest::rstest;
     use sedona_geometry::{bounding_box::BoundingBox, interval::Interval};
@@ -567,6 +590,7 @@ mod test {
             Arc::new(unrelated),
             vec![],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         assert!(matches!(
             SpatialFilter::try_from_expr(&expr_no_args).unwrap(),
@@ -575,8 +599,8 @@ mod test {
     }
 
     #[rstest]
-    fn predicate_from_expr_commutative_functions(
-        #[values("st_intersects", "st_equals", "st_touches")] func_name: &str,
+    fn predicate_from_expr_commutative_intersects_functions(
+        #[values("st_intersects", "st_touches", "st_crosses", "st_overlaps")] func_name: &str,
     ) {
         let column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("geometry", 0));
         let storage_field = WKB_GEOMETRY.to_storage_field("", true).unwrap();
@@ -592,6 +616,7 @@ mod test {
             Arc::new(func.clone()),
             vec![column.clone(), literal.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         let predicate = SpatialFilter::try_from_expr(&expr).unwrap();
         assert!(
@@ -605,11 +630,51 @@ mod test {
             Arc::new(func),
             vec![literal.clone(), column.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         let predicate_reversed = SpatialFilter::try_from_expr(&expr_reversed).unwrap();
         assert!(
             matches!(predicate_reversed, SpatialFilter::Intersects(_, _)),
             "Function {func_name} with reversed args should produce Intersects filter"
+        );
+    }
+
+    #[rstest]
+    fn predicate_from_expr_equals_function(#[values("st_equals")] func_name: &str) {
+        let column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("geometry", 0));
+        let storage_field = WKB_GEOMETRY.to_storage_field("", true).unwrap();
+        let literal: Arc<dyn PhysicalExpr> = Arc::new(Literal::new_with_metadata(
+            create_scalar(Some("POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))"), &WKB_GEOMETRY),
+            Some(storage_field.metadata().into()),
+        ));
+
+        // Test functions that should result in Covers filter
+        let func = create_dummy_spatial_function(func_name, 2);
+        let expr: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            func_name,
+            Arc::new(func.clone()),
+            vec![column.clone(), literal.clone()],
+            Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
+        ));
+        let predicate = SpatialFilter::try_from_expr(&expr).unwrap();
+        assert!(
+            matches!(predicate, SpatialFilter::Covers(_, _)),
+            "Function {func_name} should produce Covers filter"
+        );
+
+        // Test reversed argument order
+        let expr_reversed: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            func_name,
+            Arc::new(func),
+            vec![literal.clone(), column.clone()],
+            Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
+        ));
+        let predicate_reversed = SpatialFilter::try_from_expr(&expr_reversed).unwrap();
+        assert!(
+            matches!(predicate_reversed, SpatialFilter::Covers(_, _)),
+            "Function {func_name} with reversed args should produce Covers filter"
         );
     }
 
@@ -631,6 +696,7 @@ mod test {
             Arc::new(func.clone()),
             vec![column.clone(), literal.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         let predicate = SpatialFilter::try_from_expr(&expr).unwrap();
         assert!(
@@ -644,6 +710,7 @@ mod test {
             Arc::new(func),
             vec![literal.clone(), column.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         let predicate_reversed = SpatialFilter::try_from_expr(&expr_reversed).unwrap();
         assert!(
@@ -671,6 +738,7 @@ mod test {
             Arc::new(func.clone()),
             vec![column.clone(), literal.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         let predicate = SpatialFilter::try_from_expr(&expr).unwrap();
         assert!(
@@ -685,6 +753,7 @@ mod test {
             Arc::new(func),
             vec![literal.clone(), column.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         let predicate_reversed = SpatialFilter::try_from_expr(&expr_reversed).unwrap();
         assert!(
@@ -711,6 +780,7 @@ mod test {
             Arc::new(st_dwithin.clone()),
             vec![column.clone(), literal.clone(), distance_literal.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         let predicate = SpatialFilter::try_from_expr(&dwithin_expr).unwrap();
         assert!(
@@ -724,6 +794,7 @@ mod test {
             Arc::new(st_dwithin),
             vec![literal.clone(), column.clone(), distance_literal.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         let predicate_reversed = SpatialFilter::try_from_expr(&dwithin_expr_reversed).unwrap();
         assert!(
@@ -738,6 +809,7 @@ mod test {
             Arc::new(st_distance.clone()),
             vec![column.clone(), literal.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         let comparison_expr: Arc<dyn PhysicalExpr> = Arc::new(BinaryExpr::new(
             distance_expr.clone(),
@@ -771,6 +843,7 @@ mod test {
             Arc::new(st_dwithin.clone()),
             vec![column.clone(), literal.clone(), negative_distance],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         let predicate = SpatialFilter::try_from_expr(&dwithin_expr).unwrap();
         assert!(
@@ -786,6 +859,7 @@ mod test {
             Arc::new(st_dwithin),
             vec![column.clone(), literal.clone(), nan_distance],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         let predicate_nan = SpatialFilter::try_from_expr(&dwithin_expr_nan).unwrap();
         assert!(
@@ -804,7 +878,9 @@ mod test {
             "st_covers",
             "st_within",
             "st_covered_by",
-            "st_coveredby"
+            "st_coveredby",
+            "st_crosses",
+            "st_overlaps"
         )]
         func_name: &str,
     ) {
@@ -817,6 +893,7 @@ mod test {
             Arc::new(st_intersects.clone()),
             vec![],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         assert!(SpatialFilter::try_from_expr(&expr_no_args)
             .unwrap_err()
@@ -829,6 +906,7 @@ mod test {
             Arc::new(st_intersects.clone()),
             vec![literal.clone(), literal.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         assert!(matches!(
             SpatialFilter::try_from_expr(&expr_wrong_types).unwrap(),
@@ -846,7 +924,9 @@ mod test {
             "st_covers",
             "st_within",
             "st_covered_by",
-            "st_coveredby"
+            "st_coveredby",
+            "st_crosses",
+            "st_overlaps"
         )]
         func_name: &str,
     ) {
@@ -863,6 +943,7 @@ mod test {
             Arc::new(func.clone()),
             vec![column.clone(), literal.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         let predicate = SpatialFilter::try_from_expr(&expr).unwrap();
         assert!(
@@ -889,6 +970,7 @@ mod test {
             Arc::new(st_dwithin.clone()),
             vec![column.clone(), literal.clone(), distance_literal.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         let predicate = SpatialFilter::try_from_expr(&dwithin_expr).unwrap();
         assert!(
@@ -902,6 +984,7 @@ mod test {
             Arc::new(st_dwithin),
             vec![literal.clone(), column.clone(), distance_literal.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         let predicate_reversed = SpatialFilter::try_from_expr(&dwithin_expr_reversed).unwrap();
         assert!(
@@ -916,6 +999,7 @@ mod test {
             Arc::new(st_distance.clone()),
             vec![column.clone(), literal.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         let comparison_expr: Arc<dyn PhysicalExpr> = Arc::new(BinaryExpr::new(
             distance_expr.clone(),
@@ -951,6 +1035,7 @@ mod test {
             Arc::new(has_z.clone()),
             vec![column.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         let predicate = SpatialFilter::try_from_expr(&expr).unwrap();
         assert!(matches!(predicate, SpatialFilter::HasZ(_)));
@@ -966,6 +1051,7 @@ mod test {
             Arc::new(has_z.clone()),
             vec![],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         assert!(SpatialFilter::try_from_expr(&expr_no_args)
             .unwrap_err()
@@ -978,6 +1064,7 @@ mod test {
             Arc::new(has_z.clone()),
             vec![literal.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         assert!(matches!(
             SpatialFilter::try_from_expr(&expr_wrong_types).unwrap(),
