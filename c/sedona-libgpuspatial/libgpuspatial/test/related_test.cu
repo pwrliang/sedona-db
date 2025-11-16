@@ -1,7 +1,8 @@
 #include "array_stream.hpp"
-#include "gpuspatial/loader/wkb_loader.h"
+#include "gpuspatial/loader/parallel_wkb_loader.h"
 #include "gpuspatial/relate/relate.cuh"
 #include "gpuspatial/utils/pinned_vector.h"
+
 #include "test_common.hpp"
 
 #include <rmm/cuda_stream_view.hpp>
@@ -24,6 +25,8 @@ using geos::io::WKTReader;
 namespace gpuspatial {
 using point_t = Point<double, 2>;
 using index_t = uint32_t;
+using box_t = Box<Point<float, 2>>;
+using loader_t = ParallelWkbLoader<point_t, index_t>;
 
 template <typename POINT_T, typename INDEX_T>
 struct Context {
@@ -31,7 +34,7 @@ struct Context {
   PinnedVector<INDEX_T> prefix_sum1;
   PinnedVector<INDEX_T> prefix_sum2;
   PinnedVector<INDEX_T> prefix_sum3;
-  PinnedVector<Box<POINT_T>> mbrs;
+  PinnedVector<box_t> mbrs;
 };
 
 template <typename POINT_T>
@@ -43,14 +46,13 @@ void ParseWKTPoint(const char* wkt, POINT_T& point) {
   ArrowErrorSet(&error, "");
 
   ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
-  WKBLoader<POINT_T> loader;
-  auto seg = std::make_shared<PointSegment<POINT_T>>();
-  loader.Load(array.get(), 0, array->length, *seg);
-
+  loader_t loader;
   auto cuda_stream = rmm::cuda_stream_default;
-  auto device_geometries =
-      PointSegment<POINT_T>::template LoadOnDevice<index_t>(cuda_stream, {seg});
-  auto h_vec = TestUtils::ToVector(cuda_stream, device_geometries->get_points());
+
+  loader.Init();
+  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  auto device_geometries = loader.Finish(cuda_stream);
+  auto h_vec = TestUtils::ToVector(cuda_stream, device_geometries.get_points());
   cuda_stream.synchronize();
   point = h_vec[0];
 }
@@ -65,22 +67,22 @@ void ParseWKTMultiPoint(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
   ArrowErrorSet(&error, "");
 
   ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
-  WKBLoader<POINT_T> loader;
-  auto seg = std::make_shared<MultiPointSegment<POINT_T, INDEX_T>>();
-  loader.Load(array.get(), 0, array->length, *seg);
-
+  loader_t loader;
   auto cuda_stream = rmm::cuda_stream_default;
-  auto device_geometries =
-      MultiPointSegment<POINT_T, INDEX_T>::LoadOnDevice(cuda_stream, {seg});
+
+  loader.Init();
+  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  auto device_geometries = loader.Finish(cuda_stream);
+
   ctx.prefix_sum1 = TestUtils::ToVector(
-      cuda_stream, *device_geometries->get_offsets().multi_point_offsets.prefix_sum);
-  ctx.points = TestUtils::ToVector(cuda_stream, device_geometries->get_points());
-  ctx.mbrs = TestUtils::ToVector(cuda_stream, device_geometries->get_mbrs());
+      cuda_stream, device_geometries.get_offsets().multi_point_offsets.ps_num_points);
+  ctx.points = TestUtils::ToVector(cuda_stream, device_geometries.get_points());
+  ctx.mbrs = TestUtils::ToVector(cuda_stream, device_geometries.get_mbrs());
   cuda_stream.synchronize();
   MultiPointArrayView multi_array_view(
       ArrayView<INDEX_T>(ctx.prefix_sum1.data(), ctx.prefix_sum1.size()),
       ArrayView<POINT_T>(ctx.points.data(), ctx.points.size()),
-      ArrayView<Box<POINT_T>>(ctx.mbrs.data(), ctx.mbrs.size()));
+      ArrayView<box_t>(ctx.mbrs.data(), ctx.mbrs.size()));
   multi_point = multi_array_view[0];
 }
 
@@ -94,22 +96,21 @@ void ParseWKTLineString(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
   ArrowErrorSet(&error, "");
 
   ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
-  WKBLoader<POINT_T> loader;
-  auto seg = std::make_shared<LineStringSegment<POINT_T, INDEX_T>>();
-  loader.Load(array.get(), 0, array->length, *seg);
-
+  loader_t loader;
   auto cuda_stream = rmm::cuda_stream_default;
-  auto device_geometries =
-      LineStringSegment<POINT_T, INDEX_T>::LoadOnDevice(cuda_stream, {seg});
+
+  loader.Init();
+  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  auto device_geometries = loader.Finish(cuda_stream);
   ctx.prefix_sum1 = TestUtils::ToVector(
-      cuda_stream, *device_geometries->get_offsets().line_string_offsets.prefix_sum);
-  ctx.points = TestUtils::ToVector(cuda_stream, device_geometries->get_points());
-  ctx.mbrs = TestUtils::ToVector(cuda_stream, device_geometries->get_mbrs());
+      cuda_stream, device_geometries.get_offsets().line_string_offsets.ps_num_points);
+  ctx.points = TestUtils::ToVector(cuda_stream, device_geometries.get_points());
+  ctx.mbrs = TestUtils::ToVector(cuda_stream, device_geometries.get_mbrs());
   cuda_stream.synchronize();
   LineStringArrayView<POINT_T, INDEX_T> ls_array_view(
       ArrayView<INDEX_T>(ctx.prefix_sum1.data(), ctx.prefix_sum1.size()),
       ArrayView<POINT_T>(ctx.points.data(), ctx.points.size()),
-      ArrayView<Box<POINT_T>>(ctx.mbrs.data(), ctx.mbrs.size()));
+      ArrayView<box_t>(ctx.mbrs.data(), ctx.mbrs.size()));
   ls = ls_array_view[0];
 }
 
@@ -123,27 +124,26 @@ void ParseWKTMultiLineString(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
   ArrowErrorSet(&error, "");
 
   ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
-  WKBLoader<POINT_T> loader;
-  auto seg = std::make_shared<MultiLineStringSegment<POINT_T, INDEX_T>>();
-  loader.Load(array.get(), 0, array->length, *seg);
-
+  loader_t loader;
   auto cuda_stream = rmm::cuda_stream_default;
-  auto device_geometries =
-      MultiLineStringSegment<POINT_T, INDEX_T>::LoadOnDevice(cuda_stream, {seg});
+
+  loader.Init();
+  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  auto device_geometries = loader.Finish(cuda_stream);
   ctx.prefix_sum1 = TestUtils::ToVector(
       cuda_stream,
-      *device_geometries->get_offsets().multi_line_string_offsets.prefix_sum_geoms);
+      device_geometries.get_offsets().multi_line_string_offsets.ps_num_parts);
   ctx.prefix_sum2 = TestUtils::ToVector(
       cuda_stream,
-      *device_geometries->get_offsets().multi_line_string_offsets.prefix_sum_parts);
-  ctx.points = TestUtils::ToVector(cuda_stream, device_geometries->get_points());
-  ctx.mbrs = TestUtils::ToVector(cuda_stream, device_geometries->get_mbrs());
+      device_geometries.get_offsets().multi_line_string_offsets.ps_num_points);
+  ctx.points = TestUtils::ToVector(cuda_stream, device_geometries.get_points());
+  ctx.mbrs = TestUtils::ToVector(cuda_stream, device_geometries.get_mbrs());
   cuda_stream.synchronize();
   MultiLineStringArrayView<POINT_T, INDEX_T> m_ls_array_view(
       ArrayView<INDEX_T>(ctx.prefix_sum1.data(), ctx.prefix_sum1.size()),
       ArrayView<INDEX_T>(ctx.prefix_sum2.data(), ctx.prefix_sum2.size()),
       ArrayView<POINT_T>(ctx.points.data(), ctx.points.size()),
-      ArrayView<Box<POINT_T>>(ctx.mbrs.data(), ctx.mbrs.size()));
+      ArrayView<box_t>(ctx.mbrs.data(), ctx.mbrs.size()));
   m_ls = m_ls_array_view[0];
 }
 
@@ -157,25 +157,24 @@ void ParseWKTPolygon(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
   ArrowErrorSet(&error, "");
 
   ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
-  WKBLoader<POINT_T> loader;
-  auto seg = std::make_shared<PolygonSegment<POINT_T, INDEX_T>>();
-  loader.Load(array.get(), 0, array->length, *seg);
-
+  loader_t loader;
   auto cuda_stream = rmm::cuda_stream_default;
-  auto device_geometries =
-      PolygonSegment<POINT_T, INDEX_T>::LoadOnDevice(cuda_stream, {seg});
+
+  loader.Init();
+  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  auto device_geometries = loader.Finish(cuda_stream);
   ctx.prefix_sum1 = TestUtils::ToVector(
-      cuda_stream, *device_geometries->get_offsets().polygon_offsets.prefix_sum_polygons);
+      cuda_stream, device_geometries.get_offsets().polygon_offsets.ps_num_rings);
   ctx.prefix_sum2 = TestUtils::ToVector(
-      cuda_stream, *device_geometries->get_offsets().polygon_offsets.prefix_sum_rings);
-  ctx.points = TestUtils::ToVector(cuda_stream, device_geometries->get_points());
-  ctx.mbrs = TestUtils::ToVector(cuda_stream, device_geometries->get_mbrs());
+      cuda_stream, device_geometries.get_offsets().polygon_offsets.ps_num_points);
+  ctx.points = TestUtils::ToVector(cuda_stream, device_geometries.get_points());
+  ctx.mbrs = TestUtils::ToVector(cuda_stream, device_geometries.get_mbrs());
   cuda_stream.synchronize();
   PolygonArrayView<POINT_T, INDEX_T> poly_array_view(
       ArrayView<INDEX_T>(ctx.prefix_sum1.data(), ctx.prefix_sum1.size()),
       ArrayView<INDEX_T>(ctx.prefix_sum2.data(), ctx.prefix_sum2.size()),
       ArrayView<POINT_T>(ctx.points.data(), ctx.points.size()),
-      ArrayView<Box<POINT_T>>(ctx.mbrs.data(), ctx.mbrs.size()));
+      ArrayView<box_t>(ctx.mbrs.data(), ctx.mbrs.size()));
   poly = poly_array_view[0];
 }
 
@@ -189,31 +188,27 @@ void ParseWKTMultiPolygon(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
   ArrowErrorSet(&error, "");
 
   ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
-  WKBLoader<POINT_T> loader;
-  auto seg = std::make_shared<MultiPolygonSegment<POINT_T, INDEX_T>>();
-  loader.Load(array.get(), 0, array->length, *seg);
-
+  loader_t loader;
   auto cuda_stream = rmm::cuda_stream_default;
-  auto device_geometries =
-      MultiPolygonSegment<POINT_T, INDEX_T>::LoadOnDevice(cuda_stream, {seg});
+
+  loader.Init();
+  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  auto device_geometries = loader.Finish(cuda_stream);
   ctx.prefix_sum1 = TestUtils::ToVector(
-      cuda_stream,
-      *device_geometries->get_offsets().multi_polygon_offsets.prefix_sum_geoms);
+      cuda_stream, device_geometries.get_offsets().multi_polygon_offsets.ps_num_parts);
   ctx.prefix_sum2 = TestUtils::ToVector(
-      cuda_stream,
-      *device_geometries->get_offsets().multi_polygon_offsets.prefix_sum_parts);
+      cuda_stream, device_geometries.get_offsets().multi_polygon_offsets.ps_num_rings);
   ctx.prefix_sum3 = TestUtils::ToVector(
-      cuda_stream,
-      *device_geometries->get_offsets().multi_polygon_offsets.prefix_sum_rings);
-  ctx.points = TestUtils::ToVector(cuda_stream, device_geometries->get_points());
-  ctx.mbrs = TestUtils::ToVector(cuda_stream, device_geometries->get_mbrs());
+      cuda_stream, device_geometries.get_offsets().multi_polygon_offsets.ps_num_points);
+  ctx.points = TestUtils::ToVector(cuda_stream, device_geometries.get_points());
+  ctx.mbrs = TestUtils::ToVector(cuda_stream, device_geometries.get_mbrs());
   cuda_stream.synchronize();
   MultiPolygonArrayView<POINT_T, INDEX_T> poly_array_view(
       ArrayView<INDEX_T>(ctx.prefix_sum1.data(), ctx.prefix_sum1.size()),
       ArrayView<INDEX_T>(ctx.prefix_sum2.data(), ctx.prefix_sum2.size()),
       ArrayView<INDEX_T>(ctx.prefix_sum3.data(), ctx.prefix_sum3.size()),
       ArrayView<POINT_T>(ctx.points.data(), ctx.points.size()),
-      ArrayView<Box<POINT_T>>(ctx.mbrs.data(), ctx.mbrs.size()));
+      ArrayView<box_t>(ctx.mbrs.data(), ctx.mbrs.size()));
   poly = poly_array_view[0];
 }
 

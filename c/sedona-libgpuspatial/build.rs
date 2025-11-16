@@ -81,7 +81,7 @@ fn main() {
         println!("cargo:rustc-link-lib=static=rapids_logger");
         println!("cargo:rustc-link-lib=static=spdlog");
         println!("cargo:rustc-link-lib=static=geoarrow");
-        println!("cargo:rustc-link-lib=static=nanoarrow_static");
+        println!("cargo:rustc-link-lib=static=nanoarrow");
         println!("cargo:rustc-link-lib=stdc++");
         println!("cargo:rustc-link-lib=dylib=cudart"); // Link to the CUDA runtime dynamically
         println!("cargo:rustc-link-lib=dylib=cuda"); // Link to the CUDA driver library dynamically

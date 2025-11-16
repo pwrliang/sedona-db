@@ -17,7 +17,7 @@ option(GPUSPATIAL_BUILD_TESTS "Build tests" OFF)
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 
 include(cmake/rapids_config.cmake)
-
+include("${rapids-cmake-dir}/export/find_package_root.cmake")
 include(rapids-cmake)
 include(rapids-cpm)
 include(rapids-export)
@@ -30,30 +30,35 @@ rapids_cmake_build_type(Release)
 # =============================================================================
 include(FetchContent)
 
-set(NANOARROW_IPC ON)
-set(NANOARROW_IPC_WITH_ZSTD ON) # Make sure you have libzstd-dev
-# BUILD_TESTS is OFF for all dependencies to speed up build
-FetchContent_Declare(
-        nanoarrow
-        URL https://codeload.github.com/apache/arrow-nanoarrow/zip/4bfd77c82793eb91c804d6f893f7ab324e0105a0
-        URL_HASH SHA256=7cd772be4438e9699efab06d32c1ec817319ccdbe81a3495bfd6c9a80554c103
-        DOWNLOAD_EXTRACT_TIMESTAMP false
-        OVERRIDE_FIND_PACKAGE
-)
-FetchContent_MakeAvailable(nanoarrow)
-rapids_export_package(BUILD nanoarrow gpuspatial-exports)
-rapids_export_package(INSTALL nanoarrow gpuspatial-exports)
+rapids_cpm_init()
+if (GPUSPATIAL_BUILD_TESTS)
+    set(NANOARROW_IPC ON)
+    set(NANOARROW_IPC_WITH_ZSTD ON)
 
-FetchContent_Declare(
-        geoarrow
-        URL https://github.com/geoarrow/geoarrow-c/archive/4e86dea238cf251fc235b98d2fa6976cc6446dd0.zip
-        URL_HASH SHA256=a642873190712bf8301378400ff36866b188c6ed7b6565a1f1374f74caf99768
-        DOWNLOAD_EXTRACT_TIMESTAMP false
-        OVERRIDE_FIND_PACKAGE
-)
-FetchContent_MakeAvailable(geoarrow)
-rapids_export_package(BUILD geoarrow gpuspatial-exports)
-rapids_export_package(INSTALL geoarrow gpuspatial-exports)
+    include(cmake/thirdparty/get_gtest.cmake)
+    include(cmake/thirdparty/get_zstd.cmake)
+endif ()
+include(cmake/thirdparty/get_nanoarrow.cmake)
+include(cmake/thirdparty/get_geoarrow.cmake)
+include(cmake/thirdparty/get_rmm.cmake)
+
+if (NOT BUILD_SHARED_LIBS)
+    include("${rapids-cmake-dir}/export/find_package_file.cmake")
+    list(APPEND METADATA_KINDS BUILD INSTALL)
+    list(APPEND dependencies nanoarrow zstd geoarrow)
+
+    foreach (METADATA_KIND IN LISTS METADATA_KINDS)
+        foreach (dep IN LISTS dependencies)
+            rapids_export_package(${METADATA_KIND} ${dep} gpuspatial-exports)
+        endforeach ()
+    endforeach ()
+endif ()
+
+
+# rapids dependencies
+include(${rapids-cmake-dir}/cpm/rapids_logger.cmake)
+rapids_cpm_rapids_logger(BUILD_EXPORT_SET gpuspatial-exports INSTALL_EXPORT_SET gpuspatial-exports)
+create_logger_macros(GPUSPATIAL "gpuspatial::default_logger()" include/gpuspatial)
 
 FetchContent_Declare(
         OptiX
@@ -69,19 +74,6 @@ target_include_directories(OptiX INTERFACE
         $<BUILD_INTERFACE:${optix_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include> # Corresponds to <prefix>/include
 )
-
-rapids_find_package(
-        CUDAToolkit REQUIRED
-        BUILD_EXPORT_SET gpuspatial-exports
-        INSTALL_EXPORT_SET gpuspatial-exports)
-
-# rapids dependencies
-rapids_cpm_init()
-include(${rapids-cmake-dir}/cpm/rapids_logger.cmake)
-rapids_cpm_rapids_logger(BUILD_EXPORT_SET gpuspatial-exports INSTALL_EXPORT_SET gpuspatial-exports)
-create_logger_macros(GPUSPATIAL "gpuspatial::default_logger()" include/gpuspatial)
-
-include(cmake/get_rmm.cmake)
 
 # Set logging level
 set(LIBGPUSPATIAL_LOGGING_LEVEL
@@ -106,7 +98,7 @@ message("-- Config shader PTX files ${PTX_FILES}")
 add_library(gpuspatial src/rt/rt_engine.cpp src/relate_engine.cu src/spatial_joiner.cu ${PTX_FILES})
 
 # Link libraries
-target_link_libraries(gpuspatial PUBLIC nanoarrow::nanoarrow geoarrow cuda rmm::rmm rapids_logger::rapids_logger OptiX)
+target_link_libraries(gpuspatial PUBLIC nanoarrow::nanoarrow geoarrow cuda rmm::rmm rapids_logger::rapids_logger OptiX PRIVATE zstd)
 
 # Set include directories
 target_include_directories(gpuspatial
@@ -188,8 +180,6 @@ if (GPUSPATIAL_BUILD_TESTS)
 endif ()
 
 if (GPUSPATIAL_BUILD_TESTS)
-    find_package(GTest CONFIG REQUIRED)
-
     enable_testing()
 
     add_executable(gpuspatial_testing_test
@@ -210,14 +200,9 @@ if (GPUSPATIAL_BUILD_TESTS)
     target_include_directories(joiner_test PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
     target_compile_options(joiner_test PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda --expt-relaxed-constexpr>)
 
-    add_executable(index_test test/main.cc test/index_test.cu)
-    target_link_libraries(index_test cuda GTest::gtest_main GTest::gmock_main gpuspatial)
-    target_include_directories(index_test PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-    target_compile_options(index_test PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda --expt-relaxed-constexpr>)
-
     add_executable(relate_test test/main.cc test/array_stream.cc test/related_test.cu)
     target_link_libraries(relate_test PRIVATE cuda GTest::gtest_main GTest::gmock_main gpuspatial GEOS::geos nanoarrow::nanoarrow nanoarrow::nanoarrow_ipc)
-    target_compile_options(relate_test PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
+    target_compile_options(relate_test PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda --expt-relaxed-constexpr>)
 
 
     add_executable(c_wrapper_test test/main.cc test/c_wrapper_test.cc test/array_stream.cc)
@@ -229,6 +214,5 @@ if (GPUSPATIAL_BUILD_TESTS)
     gtest_discover_tests(array_stream_test)
     gtest_discover_tests(loader_test)
     gtest_discover_tests(joiner_test)
-    gtest_discover_tests(index_test)
     gtest_discover_tests(relate_test)
 endif ()
