@@ -120,6 +120,11 @@ jobs:
           # Remove large directories
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
 
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
+        with:
+          timeout-minutes: 120
+
       # Install system dependencies including CUDA toolkit for compilation
       - name: Install system dependencies
         run: |
