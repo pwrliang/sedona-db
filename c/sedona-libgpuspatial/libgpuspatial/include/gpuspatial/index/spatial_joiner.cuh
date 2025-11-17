@@ -58,8 +58,6 @@ class SpatialJoiner : public StreamingJoiner {
     // Loader configurations
     // How many threads to use for parsing WKBs
     uint32_t parsing_threads = std::thread::hardware_concurrency();
-    // Whether allowed to spill temporary data to host memory when parsing WKBs
-    bool spilling_temp_data = false;
     // How many threads are allowed to call PushStream concurrently
     uint32_t concurrency = 1;
     // number of points to represent an AABB when doing point-point queries

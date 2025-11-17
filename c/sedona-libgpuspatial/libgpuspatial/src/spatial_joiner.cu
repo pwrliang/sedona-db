@@ -38,13 +38,13 @@ static rmm::device_uvector<OptixAabb> ComputeAABBs(
 
 void SpatialJoiner::Init(const Config* config) {
   config_ = *dynamic_cast<const SpatialJoinerConfig*>(config);
-  GPUSPATIAL_LOG_INFO("SpatialJoiner %p, Initialize, Concurrency %u", this,
+  GPUSPATIAL_LOG_INFO("SpatialJoiner %p (Free %zu MB), Initialize, Concurrency %u", this,
+                      rmm::available_device_memory().first / 1024 / 1024,
                       config_.concurrency);
   details::RTConfig rt_config = details::get_default_rt_config(config_.ptx_root);
   rt_engine_.Init(rt_config);
 
   loader_t::Config loader_config;
-  loader_config.spilling_temp_data = config_.spilling_temp_data;
 
   thread_pool_ = std::make_shared<ThreadPool>(config_.parsing_threads);
   build_loader_ = std::make_unique<loader_t>(thread_pool_);
@@ -56,7 +56,8 @@ void SpatialJoiner::Init(const Config* config) {
 }
 
 void SpatialJoiner::Clear() {
-  GPUSPATIAL_LOG_INFO("SpatialJoiner %p, Clear", this);
+  GPUSPATIAL_LOG_INFO("SpatialJoiner %p (Free %zu MB), Clear", this,
+                      rmm::available_device_memory().first / 1024 / 1024);
   bvh_buffer_ = nullptr;
   geometry_grouper_.Clear();
   auto stream = rmm::cuda_stream_default;
@@ -68,7 +69,8 @@ void SpatialJoiner::Clear() {
 void SpatialJoiner::PushBuild(const ArrowSchema* schema, const ArrowArray* array,
                               int64_t offset, int64_t length) {
   IntervalRangeMarker marker(array->length, "PushBuild");
-  GPUSPATIAL_LOG_INFO("SpatialJoiner %p, PushBuild, offset %ld, length %ld", this, offset,
+  GPUSPATIAL_LOG_INFO("SpatialJoiner %p (Free %zu MB), PushBuild, offset %ld, length %ld",
+                      this, rmm::available_device_memory().first / 1024 / 1024, offset,
                       length);
   build_loader_->Parse(rmm::cuda_stream_default, array, offset, length);
 }
@@ -79,9 +81,11 @@ void SpatialJoiner::FinishBuilding() {
 
   build_geometries_ = std::move(build_loader_->Finish(stream));
 
-  GPUSPATIAL_LOG_INFO("SpatialJoiner %p, FinishBuilding, n_features: %ld, type %s", this,
-                      build_geometries_.num_features(),
-                      GeometryTypeToString(build_geometries_.get_geometry_type()));
+  GPUSPATIAL_LOG_INFO(
+      "SpatialJoiner %p (Free %zu MB), FinishBuilding, n_features: %ld, type %s", this,
+      rmm::available_device_memory().first / 1024 / 1024,
+      build_geometries_.num_features(),
+      GeometryTypeToString(build_geometries_.get_geometry_type()));
 
   if (build_geometries_.get_geometry_type() == GeometryType::kPoint) {
     geometry_grouper_.Group(stream, build_geometries_, config_.n_points_per_aabb);
@@ -120,7 +124,6 @@ void SpatialJoiner::PushStream(Context* base_ctx, const ArrowSchema* schema,
   if (ctx->stream_loader == nullptr) {
     ctx->stream_loader = std::make_unique<loader_t>(thread_pool_);
     loader_t::Config loader_config;
-    loader_config.spilling_temp_data = config_.spilling_temp_data;
 
     ctx->stream_loader->Init(loader_config);
   }

@@ -12,15 +12,28 @@
 #include "rmm/cuda_stream_view.hpp"
 #include "rmm/device_uvector.hpp"
 #include "rmm/exec_policy.hpp"
-#include "rmm/mr/device/managed_memory_resource.hpp"
 
 #include <thrust/scan.h>
 
 #include <thread>
 #include <unordered_set>
 
+#include <sys/sysinfo.h>
+#include <unistd.h>
+
 namespace gpuspatial {
 namespace detail {
+
+inline long long get_free_physical_memory_linux() {
+  struct sysinfo info;
+  if (sysinfo(&info) == 0) {
+    // info.freeram is in bytes (or unit defined by info.mem_unit)
+    // Use info.freeram * info.mem_unit for total free bytes
+    return (long long)info.freeram * (long long)info.mem_unit;
+  }
+  return 0;  // Error
+}
+
 // Copied from GeoArrow, it is faster than using GeoArrowWKBReaderRead
 struct WKBReaderPrivate {
   const uint8_t* data;
@@ -393,14 +406,6 @@ struct DeviceParsedGeometries {
   rmm::device_uvector<POINT_T> vertices{0, rmm::cuda_stream_default};
   rmm::device_uvector<mbr_t> mbrs{0, rmm::cuda_stream_default};
 
-  void Init(const rmm::device_async_resource_ref& mr) {
-    // Set MR of temp vectors
-    num_geoms = rmm::device_uvector<INDEX_T>(0, rmm::cuda_stream_default, mr);
-    num_parts = rmm::device_uvector<INDEX_T>(0, rmm::cuda_stream_default, mr);
-    num_rings = rmm::device_uvector<INDEX_T>(0, rmm::cuda_stream_default, mr);
-    num_points = rmm::device_uvector<INDEX_T>(0, rmm::cuda_stream_default, mr);
-  }
-
   void Clear(rmm::cuda_stream_view stream, bool free_memory = true) {
     feature_types.resize(0, stream);
     num_geoms.resize(0, stream);
@@ -446,6 +451,20 @@ struct DeviceParsedGeometries {
     size_t prev_sz_num_points = num_points.size();
     size_t prev_sz_vertices = vertices.size();
     size_t prev_sz_mbrs = mbrs.size();
+
+    GPUSPATIAL_LOG_DEBUG(
+        "Available %lu MB, num parts %lu MB (new %lu MB), num rings %lu MB (new %lu MB), num points %lu MB (new %lu MB), vertices %lu MB (new %lu MB), mbrs %lu MB (new %lu MB)",
+        rmm::available_device_memory().first / 1024 / 1024,
+        prev_sz_num_parts * sizeof(INDEX_T) / 1024 / 1024,
+        sz_num_parts * sizeof(INDEX_T) / 1024 / 1024,
+        prev_sz_num_rings * sizeof(INDEX_T) / 1024 / 1024,
+        sz_num_rings * sizeof(INDEX_T) / 1024 / 1024,
+        prev_sz_num_points * sizeof(INDEX_T) / 1024 / 1024,
+        sz_num_points * sizeof(INDEX_T) / 1024 / 1024,
+        prev_sz_vertices * sizeof(POINT_T) / 1024 / 1024,
+        sz_vertices * sizeof(POINT_T) / 1024 / 1024,
+        prev_sz_mbrs * sizeof(mbr_t) / 1024 / 1024,
+        sz_mbrs * sizeof(mbr_t) / 1024 / 1024);
 
     feature_types.resize(feature_types.size() + sz_feature_types, stream);
     num_geoms.resize(num_geoms.size() + sz_num_geoms, stream);
@@ -498,11 +517,7 @@ class ParallelWkbLoader {
   struct Config {
     // How many rows of WKBs to process in one chunk
     // This value affects the peak memory usage and overheads
-    int chunk_size = 256 * 1024;
-    // Whether to allow temporary memory spilling to host memory during parsing
-    // Enabling this allows to process larger datasets with limited GPU memory but will
-    // reduce parsing performance
-    bool spilling_temp_data = false;
+    int chunk_size = 16 * 1024;
   };
 
   ParallelWkbLoader()
@@ -514,11 +529,6 @@ class ParallelWkbLoader {
   void Init(const Config& config = Config()) {
     ArrowArrayViewInitFromType(&array_view_, NANOARROW_TYPE_BINARY);
     config_ = config;
-    managed_mr_ = std::make_unique<rmm::mr::managed_memory_resource>();
-    auto default_mr = rmm::mr::get_current_device_resource_ref();
-    auto mr = config_.spilling_temp_data ? *managed_mr_ : default_mr;
-
-    geoms_.Init(mr);
     geometry_type_ = GeometryType::kNull;
   }
 
@@ -536,7 +546,15 @@ class ParallelWkbLoader {
                                std::string(arrow_error.message));
     }
     auto parallelism = thread_pool_->num_threads();
-    auto chunk_size = config_.chunk_size;
+    auto est_bytes = estimateTotalBytes(array, offset, length);
+    auto free_memory = detail::get_free_physical_memory_linux();
+    uint32_t est_n_chunks = est_bytes / free_memory + 1;
+    uint32_t chunk_size = (length + est_n_chunks - 1) / est_n_chunks;
+
+    GPUSPATIAL_LOG_INFO(
+        "Parsing %ld rows, est arrow size %ld MB, free memory %lld, chunk size %u\n",
+        length, est_bytes / 1024 / 1024, free_memory / 1024 / 1024, chunk_size);
+
     auto n_chunks = (length + chunk_size - 1) / chunk_size;
     Stopwatch sw;
     double t_fetch_type = 0, t_parse = 0, t_copy = 0;
@@ -553,7 +571,7 @@ class ParallelWkbLoader {
     bool create_mbr = geometry_type_ != GeometryType::kPoint;
 
     // reserve space
-    geoms_.vertices.reserve(estimateNumPoints(array, offset, length), stream);
+    geoms_.vertices.reserve(est_bytes / sizeof(POINT_T), stream);
     if (create_mbr) geoms_.mbrs.reserve(array->length, stream);
 
     // Batch processing to reduce the peak memory usage
@@ -620,6 +638,11 @@ class ParallelWkbLoader {
 
   DeviceGeometries<POINT_T, INDEX_T> Finish(rmm::cuda_stream_view stream) {
     Stopwatch sw;
+    GPUSPATIAL_LOG_INFO(
+        "Finish building, type %s, num parts %lu, num rings %lu, num points %lu, vertices %lu",
+        GeometryTypeToString(geometry_type_), geoms_.num_parts.size(),
+        geoms_.num_rings.size(), geoms_.num_points.size(), geoms_.vertices.size());
+
     sw.start();
     // Calculate one by one to reduce peak memory
     rmm::device_uvector<INDEX_T> ps_num_geoms(0, stream);
@@ -719,7 +742,6 @@ class ParallelWkbLoader {
   Config config_;
   ArrowArrayView array_view_;
   GeometryType geometry_type_;
-  std::unique_ptr<rmm::mr::managed_memory_resource> managed_mr_;
   detail::DeviceParsedGeometries<POINT_T, INDEX_T> geoms_;
   std::shared_ptr<ThreadPool> thread_pool_;
 
@@ -832,7 +854,7 @@ class ParallelWkbLoader {
     nums.shrink_to_fit(stream);
   }
 
-  size_t estimateNumPoints(const ArrowArray* array, int64_t offset, int64_t length) {
+  size_t estimateTotalBytes(const ArrowArray* array, int64_t offset, int64_t length) {
     ArrowError arrow_error;
     if (ArrowArrayViewSetArray(&array_view_, array, &arrow_error) != NANOARROW_OK) {
       throw std::runtime_error("ArrowArrayViewSetArray error " +
@@ -846,7 +868,7 @@ class ParallelWkbLoader {
                        - 2 * sizeof(uint32_t);  // type + size
       }
     }
-    return total_bytes / (sizeof(double) * POINT_T::n_dim);
+    return total_bytes;
   }
 };
 }  // namespace gpuspatial
