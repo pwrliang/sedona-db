@@ -48,13 +48,13 @@ use sedona_spatial_join_gpu::{
 use std::fs::File;
 use std::sync::Arc;
 
-/// Helper to create test geometry data
-fn create_point_wkb(x: f64, y: f64) -> Vec<u8> {
-    let mut wkb = vec![0x01, 0x01, 0x00, 0x00, 0x00]; // Little endian point type
-    wkb.extend_from_slice(&x.to_le_bytes());
-    wkb.extend_from_slice(&y.to_le_bytes());
-    wkb
-}
+// Helper to create test geometry data
+// fn create_point_wkb(x: f64, y: f64) -> Vec<u8> {
+//     let mut wkb = vec![0x01, 0x01, 0x00, 0x00, 0x00]; // Little endian point type
+//     wkb.extend_from_slice(&x.to_le_bytes());
+//     wkb.extend_from_slice(&y.to_le_bytes());
+//     wkb
+// }
 
 /// Check if GPU is actually available
 fn is_gpu_available() -> bool {
@@ -67,6 +67,7 @@ fn is_gpu_available() -> bool {
 }
 
 /// Mock execution plan that produces geometry data
+/*
 struct GeometryDataExec {
     schema: Arc<Schema>,
     batch: RecordBatch,
@@ -180,6 +181,7 @@ impl ExecutionPlan for GeometryDataExec {
         }) as SendableRecordBatchStream)
     }
 }
+*/
 
 #[tokio::test]
 #[ignore] // Requires GPU hardware
@@ -481,8 +483,7 @@ async fn test_gpu_spatial_join_correctness() {
     // Pre-create CPU testers for all predicates (shared across all tests)
     let kernels = scalar_kernels();
     let sedona_type = SedonaType::Wkb(Edges::Planar, lnglat());
-
-    let cpu_testers: std::collections::HashMap<&str, ScalarUdfTester> = [
+    let _cpu_testers: std::collections::HashMap<&str, ScalarUdfTester> = [
         "st_equals",
         "st_disjoint",
         "st_touches",
@@ -505,7 +506,6 @@ async fn test_gpu_spatial_join_correctness() {
         (*name, tester)
     })
     .collect();
-
     // Test all spatial predicates
     // Note: Some predicates may not be fully implemented in GPU yet
     // Currently testing Intersects and Contains as known working predicates
@@ -520,7 +520,7 @@ async fn test_gpu_spatial_join_correctness() {
         (SpatialPredicate::CoveredBy, "st_coveredby", "CoveredBy"),
     ];
 
-    for (gpu_predicate, cpu_function_name, predicate_name) in predicates {
+    for (gpu_predicate, _cpu_function_name, predicate_name) in predicates {
         println!("\nTesting predicate: {}", predicate_name);
 
         // Run GPU spatial join

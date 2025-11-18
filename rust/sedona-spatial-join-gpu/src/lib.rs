@@ -27,7 +27,6 @@ pub use config::{GeometryColumnInfo, GpuSpatialJoinConfig, GpuSpatialPredicate};
 pub use datafusion::logical_expr::JoinType;
 pub use exec::GpuSpatialJoinExec;
 pub use sedona_libgpuspatial::SpatialPredicate;
-pub use stream::GpuSpatialJoinStream;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

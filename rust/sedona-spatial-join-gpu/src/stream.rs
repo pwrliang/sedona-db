@@ -28,7 +28,6 @@ use datafusion::physical_plan::{ExecutionPlan, RecordBatchStream, SendableRecord
 use datafusion_physical_plan::metrics::{self, ExecutionPlanMetricsSet, MetricBuilder};
 use futures::stream::Stream;
 
-use crate::config::GpuSpatialJoinConfig;
 use crate::gpu_backend::GpuBackend;
 use std::time::Instant;
 
@@ -66,7 +65,7 @@ impl GpuSpatialJoinMetrics {
     }
 }
 
-pub struct GpuSpatialJoinStream {
+pub(crate) struct GpuSpatialJoinStream {
     /// Right child execution plan (probe side)
     right: Arc<dyn ExecutionPlan>,
 
@@ -154,22 +153,6 @@ impl GpuSpatialJoinStream {
             join_metrics: GpuSpatialJoinMetrics::new(partition, metrics),
             once_build_data,
         })
-    }
-
-    /// Create a new GPU spatial join stream (deprecated - use new_probe)
-    #[deprecated(note = "Use new_probe instead")]
-    pub fn new(
-        _left: Arc<dyn ExecutionPlan>,
-        _right: Arc<dyn ExecutionPlan>,
-        _schema: SchemaRef,
-        _config: GpuSpatialJoinConfig,
-        _context: Arc<TaskContext>,
-        _partition: usize,
-        _metrics: &ExecutionPlanMetricsSet,
-    ) -> Result<Self> {
-        Err(DataFusionError::Internal(
-            "GpuSpatialJoinStream::new is deprecated, use new_probe instead".into(),
-        ))
     }
 
     /// Poll the stream for next batch
