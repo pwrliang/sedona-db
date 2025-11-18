@@ -34,5 +34,3 @@
 
 #define THRUST_TO_CUPTR(x) (reinterpret_cast<CUdeviceptr>(thrust::raw_pointer_cast(x)))
 #endif
-
-

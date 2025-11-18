@@ -41,7 +41,7 @@ inline void MakeWKBArrayFromWKT(const std::vector<std::string>& wkts,
   // Convert it to WKB using the ArrayReader and ArrayWriter
   geoarrow::ArrayReader reader(GEOARROW_TYPE_WKT);
   geoarrow::ArrayWriter writer(GEOARROW_TYPE_WKB);
-  struct GeoArrowError error {};
+  struct GeoArrowError error{};
 
   reader.SetArrayNonOwning(wkt_array.get());
   GEOARROW_THROW_NOT_OK(&error,
@@ -53,7 +53,7 @@ inline std::vector<std::string> ReadWKBArray(const struct ArrowArray* wkb_array)
   // Convert array to WKT using the ArrayReader and ArrayWriter
   geoarrow::ArrayReader reader(GEOARROW_TYPE_WKB);
   geoarrow::ArrayWriter writer(GEOARROW_TYPE_WKT);
-  struct GeoArrowError error {};
+  struct GeoArrowError error{};
 
   reader.SetArrayNonOwning(wkb_array);
   GEOARROW_THROW_NOT_OK(&error,
@@ -144,9 +144,9 @@ class WKBBounder {
   }
 
  private:
-  struct GeoArrowError error_ {};
+  struct GeoArrowError error_{};
   struct ArrowArrayView array_view_;
-  struct GeoArrowWKBReader reader_ {};
+  struct GeoArrowWKBReader reader_{};
   BoxXY bounds_{BoxXY::Empty()};
 };
 

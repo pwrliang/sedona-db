@@ -18,9 +18,9 @@
 cmake_minimum_required(VERSION 3.30.4 FATAL_ERROR)
 
 # Allow users to control which version is used
-if(NOT rapids-cmake-version OR NOT rapids-cmake-version MATCHES [[^([0-9][0-9])\.([0-9][0-9])$]])
-  message(
-    FATAL_ERROR "The CMake variable rapids-cmake-version must be defined in the format MAJOR.MINOR."
+if(NOT rapids-cmake-version OR NOT rapids-cmake-version MATCHES
+                               [[^([0-9][0-9])\.([0-9][0-9])$]])
+  message(FATAL_ERROR "The CMake variable rapids-cmake-version must be defined in the format MAJOR.MINOR."
   )
 endif()
 
@@ -69,15 +69,14 @@ endif()
 
 include(FetchContent)
 if(rapids-cmake-fetch-via-git)
-  FetchContent_Declare(
-    rapids-cmake
-    GIT_REPOSITORY "${rapids-cmake-url}"
-    GIT_TAG "${rapids-cmake-value-to-clone}")
+  fetchcontent_declare(rapids-cmake
+                       GIT_REPOSITORY "${rapids-cmake-url}"
+                       GIT_TAG "${rapids-cmake-value-to-clone}")
 else()
   string(APPEND rapids-cmake-url "${rapids-cmake-value-to-clone}")
-  FetchContent_Declare(rapids-cmake URL "${rapids-cmake-url}")
+  fetchcontent_declare(rapids-cmake URL "${rapids-cmake-url}")
 endif()
-FetchContent_GetProperties(rapids-cmake)
+fetchcontent_getproperties(rapids-cmake)
 if(rapids-cmake_POPULATED)
   # Something else has already populated rapids-cmake, only thing we need to do is setup the
   # CMAKE_MODULE_PATH
@@ -85,5 +84,5 @@ if(rapids-cmake_POPULATED)
     list(APPEND CMAKE_MODULE_PATH "${rapids-cmake-dir}")
   endif()
 else()
-  FetchContent_MakeAvailable(rapids-cmake)
+  fetchcontent_makeavailable(rapids-cmake)
 endif()

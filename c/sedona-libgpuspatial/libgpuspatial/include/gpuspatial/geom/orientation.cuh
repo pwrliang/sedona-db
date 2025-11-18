@@ -201,4 +201,3 @@ class Orientation {
   }
 };
 }  // namespace gpuspatial
-

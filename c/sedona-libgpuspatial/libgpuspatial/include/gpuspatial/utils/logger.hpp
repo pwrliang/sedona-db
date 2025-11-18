@@ -25,13 +25,12 @@ namespace gpuspatial {
 /**
  * @brief Returns the default sink for the global logger.
  *
- * If the environment variable `GPUSPATIAL_DEBUG_LOG_FILE` is defined, the default sink is a sink to that
- * file. Otherwise, the default is to dump to stderr.
+ * If the environment variable `GPUSPATIAL_DEBUG_LOG_FILE` is defined, the default sink is
+ * a sink to that file. Otherwise, the default is to dump to stderr.
  *
  * @return sink_ptr The sink to use
  */
-inline rapids_logger::sink_ptr default_sink()
-{
+inline rapids_logger::sink_ptr default_sink() {
   auto* filename = std::getenv("GPUSPATIAL_DEBUG_LOG_FILE");
   if (filename != nullptr) {
     return std::make_shared<rapids_logger::basic_file_sink_mt>(filename, true);
@@ -44,15 +43,16 @@ inline rapids_logger::sink_ptr default_sink()
  *
  * @return std::string The default log pattern.
  */
-inline std::string default_pattern() { return "[LIBGPUSPATIAL] [%6t][%H:%M:%S:%f][%-6l] %v"; }
+inline std::string default_pattern() {
+  return "[LIBGPUSPATIAL] [%6t][%H:%M:%S:%f][%-6l] %v";
+}
 
 /**
  * @brief Get the default logger.
  *
  * @return logger& The default logger
  */
-inline rapids_logger::logger& default_logger()
-{
+inline rapids_logger::logger& default_logger() {
   static rapids_logger::logger logger_ = [] {
     rapids_logger::logger logger_{"GPUSPATIAL", {default_sink()}};
     logger_.set_pattern(default_pattern());
@@ -68,4 +68,4 @@ inline rapids_logger::logger& default_logger()
   return logger_;
 }
 
-}  // namespace GPUSPATIAL_NAMESPACE
+}  // namespace gpuspatial

@@ -52,7 +52,7 @@ class ColumnArrayStream {
   }
 
  private:
-  struct ArrowError last_error_ {};
+  struct ArrowError last_error_{};
   nanoarrow::UniqueArrayStream inner_;
   std::string column_name_;
   int64_t column_index_{-1};

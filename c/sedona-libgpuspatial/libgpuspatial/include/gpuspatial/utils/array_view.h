@@ -28,7 +28,8 @@ class ArrayView {
   explicit ArrayView(VectorType& vec) : data_(vec.data()), size_(vec.size()) {}
 
   template <typename VectorType>
-  explicit ArrayView(const VectorType& vec) : data_(const_cast<T*>(vec.data())), size_(vec.size()) {}
+  explicit ArrayView(const VectorType& vec)
+      : data_(const_cast<T*>(vec.data())), size_(vec.size()) {}
 
   DEV_HOST ArrayView(T* data, size_t size) : data_(data), size_(size) {}
 
@@ -82,4 +83,3 @@ class ArrayView {
   size_t size_{};
 };
 }  // namespace gpuspatial
-

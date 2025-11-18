@@ -31,7 +31,7 @@ TEST(ArrayStream, StreamFromWkt) {
       {{"POINT (0 1)", "POINT (2 3)", "POINT (4 5)"}, {"POINT (6 7)", "POINT (8 9)"}},
       GEOARROW_TYPE_WKB, stream.get());
 
-  struct ArrowError error {};
+  struct ArrowError error{};
   nanoarrow::UniqueArray array;
   int64_t n_batches = 0;
   int64_t n_rows = 0;
@@ -68,7 +68,7 @@ TEST(ArrayStream, StreamFromIpc) {
   ArrayStreamFromIpc(std::string(test_dir) + "/test_points.arrows", "geometry",
                      stream.get());
 
-  struct ArrowError error {};
+  struct ArrowError error{};
   nanoarrow::UniqueSchema schema;
   ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
       << error.message;

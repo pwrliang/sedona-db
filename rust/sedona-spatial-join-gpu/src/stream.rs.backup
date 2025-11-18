@@ -393,7 +393,7 @@ impl GpuSpatialJoinStream {
         }
 
         let _join_timer = self.join_metrics.join_time.timer();
-        
+
         log::info!(
             "Processing GPU join with {} left batches and {} right batches",
             self.left_batches.len(),

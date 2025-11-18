@@ -41,5 +41,4 @@ using ShaderIndexType = uint64_t;
 #define SHADER_INDEX_TYPE_ID "SHADER_INDEX_UINT64"
 #endif
 
-
 }  // namespace gpuspatial

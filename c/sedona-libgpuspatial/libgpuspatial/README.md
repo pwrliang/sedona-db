@@ -20,8 +20,8 @@
 # libgpuspatial - A GPU-accelerated Geospatial Processing Library
 
 ***libgpuspatial*** currently supports the joining of large geospatial datasets using GPU acceleration.
-It takes two inputs called "Build" and "Stream" from two ArrowArrays containing geometries in WKB format, 
-where "Build" is a smaller dataset that can be fit into the device memory and is built into an index, 
+It takes two inputs called "Build" and "Stream" from two ArrowArrays containing geometries in WKB format,
+where "Build" is a smaller dataset that can be fit into the device memory and is built into an index,
 and "Stream" can be a continuously incoming dataset that is streamed to find matches with the help of the index.
 Currently, it supports the following geometries and join types:
 
@@ -47,7 +47,7 @@ Spatial Join Types:
 - Within
 - CoveredBy
 
-## 1. Install depencencies
+## 1. Install dependencies
 
 External dependencies:
 
