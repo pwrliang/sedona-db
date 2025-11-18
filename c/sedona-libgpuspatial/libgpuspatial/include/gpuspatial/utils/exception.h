@@ -1,110 +1,42 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions
-// are met:
-//  * Redistributions of source code must retain the above copyright
-//    notice, this list of conditions and the following disclaimer.
-//  * Redistributions in binary form must reproduce the above copyright
-//    notice, this list of conditions and the following disclaimer in the
-//    documentation and/or other materials provided with the distribution.
-//  * Neither the name of NVIDIA CORPORATION nor the names of its
-//    contributors may be used to endorse or promote products derived
-//    from this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
-// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-// PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
-// CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-// EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
-// OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #pragma once
+#include "gpuspatial/utils/logger.hpp"
+
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <optix.h>
 #include <optix_stubs.h>
 
-#include <iostream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-//------------------------------------------------------------------------------
-//
-// OptiX error-checking
-//
-//------------------------------------------------------------------------------
 
-#define OPTIX_CHECK(call) \
-  ::gpuspatial::optixCheck(call, #call, __FILE__, __LINE__)
-
-#define OPTIX_CHECK_LOG(call)                                           \
-  ::gpuspatial::optixCheckLog(call, log, sizeof(log), sizeof_log, #call, \
-                             __FILE__, __LINE__)
-
-// This version of the log-check macro doesn't require the user do setup
-// a log buffer and size variable in the surrounding context; rather the
-// macro defines a log buffer and log size variable (LOG and LOG_SIZE)
-// respectively that should be passed to the message being checked.
-// E.g.:
-//  OPTIX_CHECK_LOG2( optixProgramGroupCreate( ..., LOG, &LOG_SIZE, ... );
-//
-#define OPTIX_CHECK_LOG2(call)                                          \
-  do {                                                                  \
-    char LOG[400];                                                      \
-    size_t LOG_SIZE = sizeof(LOG);                                      \
-    ::gpuspatial::optixCheckLog(call, LOG, sizeof(LOG), LOG_SIZE, #call, \
-                               __FILE__, __LINE__);                     \
-  } while (false)
-
-#define OPTIX_CHECK_NOTHROW(call) \
-  ::gpuspatial::optixCheckNoThrow(call, #call, __FILE__, __LINE__)
-
-//------------------------------------------------------------------------------
-//
-// CUDA error-checking
-//
-//------------------------------------------------------------------------------
+#define OPTIX_CHECK(call) ::gpuspatial::optixCheck(call, #call, __FILE__, __LINE__)
 
 #define CUDA_CHECK(call) ::gpuspatial::cudaCheck(call, #call, __FILE__, __LINE__)
 
-#define CUDA_SYNC_CHECK() ::gpuspatial::cudaSyncCheck(__FILE__, __LINE__)
-
-// A non-throwing variant for use in destructors.
-// An iostream must be provided for output (e.g. std::cerr).
-#define CUDA_CHECK_NOTHROW(call) \
-  ::gpuspatial::cudaCheckNoThrow(call, #call, __FILE__, __LINE__)
-
-//------------------------------------------------------------------------------
-//
-// Assertions
-//
-//------------------------------------------------------------------------------
-
-#define SUTIL_ASSERT(cond) \
-  ::gpuspatial::assertCond(static_cast<bool>(cond), #cond, __FILE__, __LINE__)
-
-#define SUTIL_ASSERT_MSG(cond, msg)                                         \
-  ::gpuspatial::assertCondMsg(static_cast<bool>(cond), #cond, msg, __FILE__, \
-                             __LINE__)
-
-#define SUTIL_ASSERT_FAIL_MSG(msg) \
-  ::gpuspatial::assertFailMsg(msg, __FILE__, __LINE__)
-
 namespace gpuspatial {
 
-class Exception : public std::runtime_error {
+class GPUException : public std::runtime_error {
  public:
-  Exception(const char* msg) : std::runtime_error(msg) {}
+  GPUException(const char* msg) : std::runtime_error(msg) {}
 
-  Exception(OptixResult res, const char* msg)
+  GPUException(OptixResult res, const char* msg)
       : std::runtime_error(createMessage(res, msg).c_str()) {}
 
  private:
@@ -119,31 +51,10 @@ inline void optixCheck(OptixResult res, const char* call, const char* file,
                        unsigned int line) {
   if (res != OPTIX_SUCCESS) {
     std::stringstream ss;
-    ss << "Optix call '" << call << "' failed: " << file << ':' << line
-       << ")\n";
-    throw Exception(res, ss.str().c_str());
-  }
-}
-
-inline void optixCheckLog(OptixResult res, const char* log, size_t sizeof_log,
-                          size_t sizeof_log_returned, const char* call,
-                          const char* file, unsigned int line) {
-  if (res != OPTIX_SUCCESS) {
-    std::stringstream ss;
-    ss << "Optix call '" << call << "' failed: " << file << ':' << line
-       << ")\nLog:\n"
-       << log << (sizeof_log_returned > sizeof_log ? "<TRUNCATED>" : "")
-       << '\n';
-    throw Exception(res, ss.str().c_str());
-  }
-}
-
-inline void optixCheckNoThrow(OptixResult res, const char* call,
-                              const char* file, unsigned int line) {
-  if (res != OPTIX_SUCCESS) {
-    std::cerr << "Optix call '" << call << "' failed: " << file << ':' << line
-              << ")\n";
-    std::terminate();
+    ss << "OptiX API call (" << call << ") failed with error " << optixGetErrorName(res)
+       << " (" << file << ":" << line << ")";
+    GPUSPATIAL_LOG_ERROR("Optix API error: {}", ss.str());
+    throw GPUException(res, ss.str().c_str());
   }
 }
 
@@ -151,57 +62,11 @@ inline void cudaCheck(cudaError_t error, const char* call, const char* file,
                       unsigned int line) {
   if (error != cudaSuccess) {
     std::stringstream ss;
-    ss << "CUDA call (" << call << " ) failed with error: '"
-       << cudaGetErrorString(error) << "' (" << file << ":" << line << ")\n";
-    throw Exception(ss.str().c_str());
+    ss << "CUDA API call (" << call << ") failed with error " << cudaGetErrorString(error)
+       << " (" << file << ":" << line << ")";
+    GPUSPATIAL_LOG_ERROR("CUDA API error: {}", ss.str());
+    throw GPUException(ss.str().c_str());
   }
-}
-
-inline void cudaSyncCheck(const char* file, unsigned int line) {
-  cudaDeviceSynchronize();
-  cudaError_t error = cudaGetLastError();
-  if (error != cudaSuccess) {
-    std::stringstream ss;
-    ss << "CUDA error on synchronize with error '" << cudaGetErrorString(error)
-       << "' (" << file << ":" << line << ")\n";
-    throw Exception(ss.str().c_str());
-  }
-}
-
-inline void cudaCheckNoThrow(cudaError_t error, const char* call,
-                             const char* file, unsigned int line) {
-  if (error != cudaSuccess) {
-    std::cerr << "CUDA call (" << call << " ) failed with error: '"
-              << cudaGetErrorString(error) << "' (" << file << ":" << line
-              << ")\n";
-    std::terminate();
-  }
-}
-
-inline void assertCond(bool result, const char* cond, const char* file,
-                       unsigned int line) {
-  if (!result) {
-    std::stringstream ss;
-    ss << file << " (" << line << "): " << cond;
-    throw Exception(ss.str().c_str());
-  }
-}
-
-inline void assertCondMsg(bool result, const char* cond, const std::string& msg,
-                          const char* file, unsigned int line) {
-  if (!result) {
-    std::stringstream ss;
-    ss << msg << ": " << file << " (" << line << "): " << cond;
-    throw Exception(ss.str().c_str());
-  }
-}
-
-[[noreturn]] inline void assertFailMsg(const std::string& msg, const char* file,
-                                       unsigned int line) {
-  std::stringstream ss;
-  ss << msg << ": " << file << " (" << line << ')';
-  throw Exception(ss.str().c_str());
 }
 
 }  // namespace gpuspatial
-

@@ -10,6 +10,7 @@ c/sedona-geoarrow-c/src/nanoarrow/*
 c/sedona-s2geography/s2geography/*
 c/sedona-s2geography/s2geometry/*
 c/sedona-libgpuspatial/libgpuspatial/test/geoarrow_geos/*
+c/sedona-libgpuspatial/libgpuspatial/cmake/RAPIDS_VERSION
 c/sedona-tg/src/tg/*
 Cargo.lock
 ci/scripts/windows/Cargo.lock

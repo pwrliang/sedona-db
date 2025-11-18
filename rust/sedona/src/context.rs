@@ -85,7 +85,11 @@ impl SedonaContext {
         #[cfg(feature = "gpu")]
         {
             use sedona_common::option::SedonaOptions;
-            if let Some(sedona_opts) = session_config.options_mut().extensions.get_mut::<SedonaOptions>() {
+            if let Some(sedona_opts) = session_config
+                .options_mut()
+                .extensions
+                .get_mut::<SedonaOptions>()
+            {
                 sedona_opts.spatial_join.gpu.enable = true;
             }
         }

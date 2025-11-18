@@ -1178,7 +1178,11 @@ mod tests {
                 count += 1;
             }
             #[cfg(feature = "gpu")]
-            if node.as_any().downcast_ref::<sedona_spatial_join_gpu::GpuSpatialJoinExec>().is_some() {
+            if node
+                .as_any()
+                .downcast_ref::<sedona_spatial_join_gpu::GpuSpatialJoinExec>()
+                .is_some()
+            {
                 count += 1;
             }
             Ok(TreeNodeRecursion::Continue)
@@ -1186,15 +1190,13 @@ mod tests {
         Ok(count)
     }
 
-
-
     #[cfg(feature = "gpu")]
     #[tokio::test]
     #[ignore] // Requires GPU hardware
     async fn test_gpu_spatial_join_sql() -> Result<()> {
+        use arrow_array::Int32Array;
         use sedona_common::option::ExecutionMode;
         use sedona_testing::create::create_array_storage;
-        use arrow_array::Int32Array;
 
         // Check if GPU is available
         use sedona_libgpuspatial::GpuSpatialContext;
@@ -1213,17 +1215,17 @@ mod tests {
         // Create guaranteed-to-intersect test data
         // 3 polygons and 5 points where 4 points are inside polygons
         let polygon_wkts = vec![
-            Some("POLYGON ((0 0, 20 0, 20 20, 0 20, 0 0))"),  // Large polygon covering 0-20
-            Some("POLYGON ((30 30, 50 30, 50 50, 30 50, 30 30))"),  // Medium polygon at 30-50
-            Some("POLYGON ((60 60, 80 60, 80 80, 60 80, 60 60))"),  // Small polygon at 60-80
+            Some("POLYGON ((0 0, 20 0, 20 20, 0 20, 0 0))"), // Large polygon covering 0-20
+            Some("POLYGON ((30 30, 50 30, 50 50, 30 50, 30 30))"), // Medium polygon at 30-50
+            Some("POLYGON ((60 60, 80 60, 80 80, 60 80, 60 60))"), // Small polygon at 60-80
         ];
 
         let point_wkts = vec![
-            Some("POINT (10 10)"),  // Inside polygon 0
-            Some("POINT (15 15)"),  // Inside polygon 0
-            Some("POINT (40 40)"),  // Inside polygon 1
-            Some("POINT (70 70)"),  // Inside polygon 2
-            Some("POINT (100 100)"),  // Outside all
+            Some("POINT (10 10)"),   // Inside polygon 0
+            Some("POINT (15 15)"),   // Inside polygon 0
+            Some("POINT (40 40)"),   // Inside polygon 1
+            Some("POINT (70 70)"),   // Inside polygon 2
+            Some("POINT (100 100)"), // Outside all
         ];
 
         let polygon_geoms = create_array_storage(&polygon_wkts, &WKB_GEOMETRY);
@@ -1247,10 +1249,8 @@ mod tests {
             vec![Arc::new(polygon_ids), polygon_geoms],
         )?;
 
-        let point_batch = RecordBatch::try_new(
-            point_schema.clone(),
-            vec![Arc::new(point_ids), point_geoms],
-        )?;
+        let point_batch =
+            RecordBatch::try_new(point_schema.clone(), vec![Arc::new(point_ids), point_geoms])?;
 
         let polygon_partitions = vec![vec![polygon_batch]];
         let point_partitions = vec![vec![point_batch]];
@@ -1271,23 +1271,31 @@ mod tests {
 
         // Setup context for both queries
         let ctx = setup_context(Some(options.clone()), 1024)?;
-        ctx.register_table("L", Arc::new(MemTable::try_new(
-            polygon_schema.clone(),
-            polygon_partitions.clone(),
-        )?))?;
-        ctx.register_table("R", Arc::new(MemTable::try_new(
-            point_schema.clone(),
-            point_partitions.clone(),
-        )?))?;
-        
+        ctx.register_table(
+            "L",
+            Arc::new(MemTable::try_new(
+                polygon_schema.clone(),
+                polygon_partitions.clone(),
+            )?),
+        )?;
+        ctx.register_table(
+            "R",
+            Arc::new(MemTable::try_new(
+                point_schema.clone(),
+                point_partitions.clone(),
+            )?),
+        )?;
+
         // Test ST_Intersects - should return 4 rows (4 points inside polygons)
-        
+
         // First, run EXPLAIN to show the physical plan
-        let explain_df = ctx.sql("EXPLAIN SELECT * FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry)").await?;
+        let explain_df = ctx
+            .sql("EXPLAIN SELECT * FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry)")
+            .await?;
         let explain_batches = explain_df.collect().await?;
         println!("=== ST_Intersects Physical Plan ===");
         arrow::util::pretty::print_batches(&explain_batches)?;
-        
+
         // Now run the actual query
         let result = run_spatial_join_query(
             &polygon_schema,
@@ -1300,17 +1308,25 @@ mod tests {
         )
         .await?;
 
-        assert!(result.num_rows() > 0, "Expected join results for ST_Intersects");
-        println!("ST_Intersects returned {} rows (expected 4)", result.num_rows());
+        assert!(
+            result.num_rows() > 0,
+            "Expected join results for ST_Intersects"
+        );
+        println!(
+            "ST_Intersects returned {} rows (expected 4)",
+            result.num_rows()
+        );
 
         // Test ST_Contains - should also return 4 rows
-        
+
         // First, run EXPLAIN to show the physical plan
-        let explain_df = ctx.sql("EXPLAIN SELECT * FROM L JOIN R ON ST_Contains(L.geometry, R.geometry)").await?;
+        let explain_df = ctx
+            .sql("EXPLAIN SELECT * FROM L JOIN R ON ST_Contains(L.geometry, R.geometry)")
+            .await?;
         let explain_batches = explain_df.collect().await?;
         println!("\n=== ST_Contains Physical Plan ===");
         arrow::util::pretty::print_batches(&explain_batches)?;
-        
+
         // Now run the actual query
         let result = run_spatial_join_query(
             &polygon_schema,
@@ -1323,8 +1339,14 @@ mod tests {
         )
         .await?;
 
-        assert!(result.num_rows() > 0, "Expected join results for ST_Contains");
-        println!("ST_Contains returned {} rows (expected 4)", result.num_rows());
+        assert!(
+            result.num_rows() > 0,
+            "Expected join results for ST_Contains"
+        );
+        println!(
+            "ST_Contains returned {} rows (expected 4)",
+            result.num_rows()
+        );
 
         Ok(())
     }

@@ -242,8 +242,11 @@ impl SpatialJoinOptimizer {
             if let Some(spatial_join) = self.try_convert_to_spatial_join(nested_loop_join)? {
                 // Try GPU path first if feature is enabled
                 // Need to downcast to SpatialJoinExec for GPU optimizer
-                if let Some(spatial_join_exec) = spatial_join.as_any().downcast_ref::<SpatialJoinExec>() {
-                    if let Some(gpu_join) = try_create_gpu_spatial_join(spatial_join_exec, config)? {
+                if let Some(spatial_join_exec) =
+                    spatial_join.as_any().downcast_ref::<SpatialJoinExec>()
+                {
+                    if let Some(gpu_join) = try_create_gpu_spatial_join(spatial_join_exec, config)?
+                    {
                         log::info!("Using GPU-accelerated spatial join");
                         return Ok(Transformed::yes(gpu_join));
                     }
@@ -259,8 +262,11 @@ impl SpatialJoinOptimizer {
             if let Some(spatial_join) = self.try_convert_hash_join_to_spatial(hash_join)? {
                 // Try GPU path first if feature is enabled
                 // Need to downcast to SpatialJoinExec for GPU optimizer
-                if let Some(spatial_join_exec) = spatial_join.as_any().downcast_ref::<SpatialJoinExec>() {
-                    if let Some(gpu_join) = try_create_gpu_spatial_join(spatial_join_exec, config)? {
+                if let Some(spatial_join_exec) =
+                    spatial_join.as_any().downcast_ref::<SpatialJoinExec>()
+                {
+                    if let Some(gpu_join) = try_create_gpu_spatial_join(spatial_join_exec, config)?
+                    {
                         log::info!("Using GPU-accelerated spatial join for KNN");
                         return Ok(Transformed::yes(gpu_join));
                     }
@@ -1207,7 +1213,7 @@ mod gpu_optimizer {
 
         //         eprintln!("DEBUG find_geometry_column: Schema has {} fields", schema.fields().len());
         //         for (idx, field) in schema.fields().iter().enumerate() {
-        //             eprintln!("  Field {}: name='{}', type={:?}, metadata={:?}", 
+        //             eprintln!("  Field {}: name='{}', type={:?}, metadata={:?}",
         //                 idx, field.name(), field.data_type(), field.metadata());
         //         }
 
@@ -1230,11 +1236,12 @@ mod gpu_optimizer {
                 // If no metadata, assume first binary column is geometry
                 // This is a fallback for files without proper GeoArrow metadata
                 if idx == schema.fields().len() - 1
-                    || schema
-                        .fields()
-                        .iter()
-                        .skip(idx + 1)
-                        .all(|f| !matches!(f.data_type(), DataType::Binary | DataType::LargeBinary | DataType::BinaryView))
+                    || schema.fields().iter().skip(idx + 1).all(|f| {
+                        !matches!(
+                            f.data_type(),
+                            DataType::Binary | DataType::LargeBinary | DataType::BinaryView
+                        )
+                    })
                 {
                     log::warn!(
                         "Geometry column '{}' has no GeoArrow metadata, assuming it's WKB",
@@ -1255,7 +1262,9 @@ mod gpu_optimizer {
     }
 
     /// Convert SpatialPredicate to GPU predicate
-    pub(crate) fn convert_to_gpu_predicate(predicate: &SpatialPredicate) -> Result<GpuSpatialPredicate> {
+    pub(crate) fn convert_to_gpu_predicate(
+        predicate: &SpatialPredicate,
+    ) -> Result<GpuSpatialPredicate> {
         use crate::spatial_predicate::SpatialRelationType;
         use sedona_libgpuspatial::SpatialPredicate as LibGpuPred;
 

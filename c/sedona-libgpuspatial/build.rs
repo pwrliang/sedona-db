@@ -65,7 +65,7 @@ fn main() {
 
         let dst = cmake::Config::new("./libgpuspatial")
             .define("CMAKE_CUDA_ARCHITECTURES", "86")
-            .define("CMAKE_POLICY_VERSION_MINIMUM", "3.5")  // Allow older CMake versions
+            .define("CMAKE_POLICY_VERSION_MINIMUM", "3.5") // Allow older CMake versions
             .define("CMAKE_BUILD_TYPE", "Release") // Set build type to Debug or Release
             .define("LIBGPUSPATIAL_LOGGING_LEVEL", "WARN") // Set logging level
             .build();
@@ -84,7 +84,7 @@ fn main() {
         } else if std::path::Path::new("/usr/local/cuda/lib64").exists() {
             "/usr/local/cuda/lib64".to_string()
         } else {
-            "/usr/local/cuda/lib64".to_string() // fallback
+            panic!("CUDA lib is not found. Neither CUDA_HOME is set nor the default path /usr/local/cuda/lib64 exists.");
         };
 
         println!("cargo:rustc-link-search=native={}", cuda_lib_path); // CUDA runtime

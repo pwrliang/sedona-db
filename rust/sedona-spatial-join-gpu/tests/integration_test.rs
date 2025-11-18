@@ -18,8 +18,10 @@
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow_array::RecordBatch;
 use datafusion::execution::context::TaskContext;
-use datafusion::physical_plan::{DisplayAs, DisplayFormatType, PlanProperties, RecordBatchStream, SendableRecordBatchStream};
 use datafusion::physical_plan::ExecutionPlan;
+use datafusion::physical_plan::{
+    DisplayAs, DisplayFormatType, PlanProperties, RecordBatchStream, SendableRecordBatchStream,
+};
 use datafusion_common::Result as DFResult;
 use futures::{Stream, StreamExt};
 use sedona_spatial_join_gpu::{

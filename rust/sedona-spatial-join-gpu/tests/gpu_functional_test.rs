@@ -36,6 +36,7 @@
 //! ```
 
 use arrow::datatypes::{DataType, Field, Schema};
+use arrow::ipc::reader::StreamReader;
 use arrow_array::{Int32Array, RecordBatch};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::ExecutionPlan;
@@ -44,7 +45,6 @@ use sedona_spatial_join_gpu::{
     GeometryColumnInfo, GpuSpatialJoinConfig, GpuSpatialJoinExec, GpuSpatialPredicate,
     SpatialPredicate,
 };
-use arrow::ipc::reader::StreamReader;
 use std::fs::File;
 use std::sync::Arc;
 
@@ -185,28 +185,31 @@ impl ExecutionPlan for GeometryDataExec {
 #[ignore] // Requires GPU hardware
 async fn test_gpu_spatial_join_basic_correctness() {
     let _ = env_logger::builder().is_test(true).try_init();
-    
+
     if !is_gpu_available() {
         eprintln!("GPU not available, skipping test");
         return;
     }
 
-    let test_data_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../c/sedona-libgpuspatial/libgpuspatial/test_data");
+    let test_data_dir = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../c/sedona-libgpuspatial/libgpuspatial/test_data"
+    );
     let points_path = format!("{}/test_points.arrows", test_data_dir);
     let polygons_path = format!("{}/test_polygons.arrows", test_data_dir);
-    
-    let points_file = File::open(&points_path)
-        .unwrap_or_else(|_| panic!("Failed to open {}", points_path));
-    let polygons_file = File::open(&polygons_path)
-        .unwrap_or_else(|_| panic!("Failed to open {}", polygons_path));
-    
+
+    let points_file =
+        File::open(&points_path).unwrap_or_else(|_| panic!("Failed to open {}", points_path));
+    let polygons_file =
+        File::open(&polygons_path).unwrap_or_else(|_| panic!("Failed to open {}", polygons_path));
+
     let mut points_reader = StreamReader::try_new(points_file, None).unwrap();
     let mut polygons_reader = StreamReader::try_new(polygons_file, None).unwrap();
 
     // Process all batches like the CUDA test does
     let mut total_rows = 0;
     let mut iteration = 0;
-    
+
     loop {
         // Read next batch from each stream
         let polygons_batch = match polygons_reader.next() {
@@ -214,25 +217,38 @@ async fn test_gpu_spatial_join_basic_correctness() {
             Some(Err(e)) => panic!("Error reading polygons batch: {}", e),
             None => break, // End of stream
         };
-        
+
         let points_batch = match points_reader.next() {
             Some(Ok(batch)) => batch,
             Some(Err(e)) => panic!("Error reading points batch: {}", e),
             None => break, // End of stream
         };
-        
+
         if iteration == 0 {
-            println!("Batch {}: {} polygons, {} points", iteration, polygons_batch.num_rows(), points_batch.num_rows());
+            println!(
+                "Batch {}: {} polygons, {} points",
+                iteration,
+                polygons_batch.num_rows(),
+                points_batch.num_rows()
+            );
         }
-        
+
         // Find geometry column index
-        let points_geom_idx = points_batch.schema().index_of("geometry").expect("geometry column not found");
-        let polygons_geom_idx = polygons_batch.schema().index_of("geometry").expect("geometry column not found");
-        
+        let points_geom_idx = points_batch
+            .schema()
+            .index_of("geometry")
+            .expect("geometry column not found");
+        let polygons_geom_idx = polygons_batch
+            .schema()
+            .index_of("geometry")
+            .expect("geometry column not found");
+
         // Create execution plans from the batches
-        let left_plan = Arc::new(SingleBatchExec::new(polygons_batch.clone())) as Arc<dyn ExecutionPlan>;
-        let right_plan = Arc::new(SingleBatchExec::new(points_batch.clone())) as Arc<dyn ExecutionPlan>;
-        
+        let left_plan =
+            Arc::new(SingleBatchExec::new(polygons_batch.clone())) as Arc<dyn ExecutionPlan>;
+        let right_plan =
+            Arc::new(SingleBatchExec::new(points_batch.clone())) as Arc<dyn ExecutionPlan>;
+
         let config = GpuSpatialJoinConfig {
             join_type: datafusion::logical_expr::JoinType::Inner,
             left_geom_column: GeometryColumnInfo {
@@ -261,7 +277,10 @@ async fn test_gpu_spatial_join_basic_correctness() {
                     let batch_rows = batch.num_rows();
                     total_rows += batch_rows;
                     if batch_rows > 0 && iteration < 5 {
-                        println!("Iteration {}: Got {} rows from GPU join", iteration, batch_rows);
+                        println!(
+                            "Iteration {}: Got {} rows from GPU join",
+                            iteration, batch_rows
+                        );
                     }
                 }
                 Err(e) => {
@@ -269,11 +288,14 @@ async fn test_gpu_spatial_join_basic_correctness() {
                 }
             }
         }
-        
+
         iteration += 1;
     }
 
-    println!("Total rows from GPU join across {} iterations: {}", iteration, total_rows);
+    println!(
+        "Total rows from GPU join across {} iterations: {}",
+        iteration, total_rows
+    );
     // Test passes if GPU join completes without crashing and finds results
     // The CUDA reference test loops through all batches to accumulate results
     assert!(
@@ -282,7 +304,10 @@ async fn test_gpu_spatial_join_basic_correctness() {
         iteration,
         total_rows
     );
-    println!("GPU spatial join completed successfully with {} result rows", total_rows);
+    println!(
+        "GPU spatial join completed successfully with {} result rows",
+        total_rows
+    );
 }
 /// Helper execution plan that returns a single pre-loaded batch
 struct SingleBatchExec {
@@ -390,21 +415,21 @@ impl datafusion::physical_plan::ExecutionPlan for SingleBatchExec {
             schema: self.schema.clone(),
             batch: Some(self.batch.clone()),
         }) as SendableRecordBatchStream)
-}
     }
+}
 #[tokio::test]
 #[ignore] // Requires GPU hardware
 async fn test_gpu_spatial_join_correctness() {
     use arrow_array::builder::BinaryBuilder;
+    use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_geos::register::scalar_kernels;
     use sedona_schema::crs::lnglat;
     use sedona_schema::datatypes::{Edges, SedonaType, WKB_GEOMETRY};
     use sedona_testing::create::create_array_storage;
     use sedona_testing::testers::ScalarUdfTester;
-    use sedona_expr::scalar_udf::SedonaScalarUDF;
-    
+
     let _ = env_logger::builder().is_test(true).try_init();
-    
+
     if !is_gpu_available() {
         eprintln!("GPU not available, skipping test");
         return;
@@ -418,7 +443,7 @@ async fn test_gpu_spatial_join_correctness() {
         Some("POLYGON ((30 0, 60 20, 50 50, 10 50, 0 20, 30 0), (20 30, 25 40, 15 40, 20 30), (30 30, 35 40, 25 40, 30 30), (40 30, 45 40, 35 40, 40 30))"),
         Some("POLYGON ((40 0, 50 30, 80 20, 90 70, 60 90, 30 80, 20 40, 40 0), (50 20, 65 30, 60 50, 45 40, 50 20), (30 60, 50 70, 45 80, 30 60))"),
     ];
-    
+
     let point_values = &[
         Some("POINT (30 20)"), // poly0
         Some("POINT (20 20)"), // poly1
@@ -430,35 +455,34 @@ async fn test_gpu_spatial_join_correctness() {
     // Create Arrow arrays from WKT (shared for all predicates)
     let polygons = create_array_storage(polygon_values, &WKB_GEOMETRY);
     let points = create_array_storage(point_values, &WKB_GEOMETRY);
-    
+
     // Create RecordBatches (shared for all predicates)
     let polygon_schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
         Field::new("geometry", DataType::Binary, false),
     ]));
-    
+
     let point_schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
         Field::new("geometry", DataType::Binary, false),
     ]));
-    
+
     let polygon_ids = Int32Array::from(vec![0, 1, 2, 3, 4]);
     let point_ids = Int32Array::from(vec![0, 1, 2, 3, 4]);
-    
+
     let polygon_batch = RecordBatch::try_new(
         polygon_schema.clone(),
         vec![Arc::new(polygon_ids), polygons],
-    ).unwrap();
-    
-    let point_batch = RecordBatch::try_new(
-        point_schema.clone(),
-        vec![Arc::new(point_ids), points],
-    ).unwrap();
+    )
+    .unwrap();
+
+    let point_batch =
+        RecordBatch::try_new(point_schema.clone(), vec![Arc::new(point_ids), points]).unwrap();
 
     // Pre-create CPU testers for all predicates (shared across all tests)
     let kernels = scalar_kernels();
     let sedona_type = SedonaType::Wkb(Edges::Planar, lnglat());
-    
+
     let cpu_testers: std::collections::HashMap<&str, ScalarUdfTester> = [
         "st_equals",
         "st_disjoint",
@@ -477,7 +501,8 @@ async fn test_gpu_spatial_join_correctness() {
             .map(|(_, kernel_ref)| kernel_ref)
             .unwrap();
         let udf = SedonaScalarUDF::from_kernel(name, kernel.clone());
-        let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type.clone()]);
+        let tester =
+            ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type.clone()]);
         (*name, tester)
     })
     .collect();
@@ -498,11 +523,13 @@ async fn test_gpu_spatial_join_correctness() {
 
     for (gpu_predicate, cpu_function_name, predicate_name) in predicates {
         println!("\nTesting predicate: {}", predicate_name);
-        
+
         // Run GPU spatial join
-        let left_plan = Arc::new(SingleBatchExec::new(polygon_batch.clone())) as Arc<dyn ExecutionPlan>;
-        let right_plan = Arc::new(SingleBatchExec::new(point_batch.clone())) as Arc<dyn ExecutionPlan>;
-        
+        let left_plan =
+            Arc::new(SingleBatchExec::new(polygon_batch.clone())) as Arc<dyn ExecutionPlan>;
+        let right_plan =
+            Arc::new(SingleBatchExec::new(point_batch.clone())) as Arc<dyn ExecutionPlan>;
+
         let config = GpuSpatialJoinConfig {
             join_type: datafusion::logical_expr::JoinType::Inner,
             left_geom_column: GeometryColumnInfo {
@@ -529,18 +556,29 @@ async fn test_gpu_spatial_join_correctness() {
         let mut gpu_result_pairs: Vec<(u32, u32)> = Vec::new();
         while let Some(result) = stream.next().await {
             let batch = result.expect("GPU join failed");
-            
+
             // Extract the join indices from the result batch
-            let left_id_col = batch.column(0).as_any().downcast_ref::<Int32Array>().unwrap();
-            let right_id_col = batch.column(2).as_any().downcast_ref::<Int32Array>().unwrap();
-            
+            let left_id_col = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<Int32Array>()
+                .unwrap();
+            let right_id_col = batch
+                .column(2)
+                .as_any()
+                .downcast_ref::<Int32Array>()
+                .unwrap();
+
             for i in 0..batch.num_rows() {
                 gpu_result_pairs.push((left_id_col.value(i) as u32, right_id_col.value(i) as u32));
             }
         }
-        println!("  ✓ {} - GPU join: {} result rows", predicate_name, gpu_result_pairs.len());
-
+        println!(
+            "  ✓ {} - GPU join: {} result rows",
+            predicate_name,
+            gpu_result_pairs.len()
+        );
     }
-    
+
     println!("\n✓ All spatial predicates correctness tests passed");
 }

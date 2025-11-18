@@ -15,18 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow_array::{Int32Array, RecordBatch};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::ExecutionPlan;
 use futures::StreamExt;
+use sedona_schema::crs::lnglat;
+use sedona_schema::datatypes::{Edges, SedonaType, WKB_GEOMETRY};
 use sedona_spatial_join_gpu::{
     GeometryColumnInfo, GpuSpatialJoinConfig, GpuSpatialJoinExec, GpuSpatialPredicate,
     SpatialPredicate,
 };
-use sedona_schema::crs::lnglat;
-use sedona_schema::datatypes::{Edges, SedonaType, WKB_GEOMETRY};
 use sedona_testing::create::create_array_storage;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
@@ -163,11 +163,16 @@ fn generate_random_polygons(count: usize, size: f64) -> Vec<String> {
             let y: f64 = rng.gen_range(-90.0..90.0);
             format!(
                 "POLYGON (({} {}, {} {}, {} {}, {} {}, {} {}))",
-                x, y,
-                x + size, y,
-                x + size, y + size,
-                x, y + size,
-                x, y
+                x,
+                y,
+                x + size,
+                y,
+                x + size,
+                y + size,
+                x,
+                y + size,
+                x,
+                y
             )
         })
         .collect()
@@ -213,11 +218,8 @@ fn prepare_benchmark_data(polygons: &[String], points: &[String]) -> BenchmarkDa
     )
     .unwrap();
 
-    let point_batch = RecordBatch::try_new(
-        point_schema.clone(),
-        vec![Arc::new(point_ids), point_array],
-    )
-    .unwrap();
+    let point_batch =
+        RecordBatch::try_new(point_schema.clone(), vec![Arc::new(point_ids), point_array]).unwrap();
 
     BenchmarkData {
         polygon_batch,
@@ -228,14 +230,13 @@ fn prepare_benchmark_data(polygons: &[String], points: &[String]) -> BenchmarkDa
 }
 
 /// Benchmark GPU spatial join (timing only the join execution, not data preparation)
-fn bench_gpu_spatial_join(
-    rt: &Runtime,
-    data: &BenchmarkData,
-) -> usize {
+fn bench_gpu_spatial_join(rt: &Runtime, data: &BenchmarkData) -> usize {
     rt.block_on(async {
         // Create execution plans (lightweight - just wraps the pre-created batches)
-        let left_plan = Arc::new(SingleBatchExec::new(data.polygon_batch.clone())) as Arc<dyn ExecutionPlan>;
-        let right_plan = Arc::new(SingleBatchExec::new(data.point_batch.clone())) as Arc<dyn ExecutionPlan>;
+        let left_plan =
+            Arc::new(SingleBatchExec::new(data.polygon_batch.clone())) as Arc<dyn ExecutionPlan>;
+        let right_plan =
+            Arc::new(SingleBatchExec::new(data.point_batch.clone())) as Arc<dyn ExecutionPlan>;
 
         let config = GpuSpatialJoinConfig {
             join_type: datafusion::logical_expr::JoinType::Inner,
@@ -276,14 +277,14 @@ fn bench_cpu_spatial_join(
     tester: &sedona_testing::testers::ScalarUdfTester,
 ) -> usize {
     let mut result_count = 0;
-    
+
     // Nested loop join using GEOS (on WKT strings, same as GPU input)
     for poly in data.polygon_wkts.iter() {
         for point in data.point_wkts.iter() {
             let result = tester
                 .invoke_scalar_scalar(poly.as_str(), point.as_str())
                 .unwrap();
-            
+
             if result == Some(true).unwrap().into() {
                 result_count += 1;
             }
@@ -297,9 +298,9 @@ fn benchmark_spatial_join(c: &mut Criterion) {
     use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_geos::register::scalar_kernels;
     use sedona_testing::testers::ScalarUdfTester;
-    
+
     let rt = Runtime::new().unwrap();
-    
+
     // Pre-create CPU tester (NOT timed)
     let kernels = scalar_kernels();
     let st_intersects = kernels
@@ -307,15 +308,16 @@ fn benchmark_spatial_join(c: &mut Criterion) {
         .find(|(name, _)| *name == "st_intersects")
         .map(|(_, kernel_ref)| kernel_ref)
         .unwrap();
-    
+
     let sedona_type = SedonaType::Wkb(Edges::Planar, lnglat());
     let udf = SedonaScalarUDF::from_kernel("st_intersects", st_intersects);
-    let cpu_tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type.clone()]);
-    
+    let cpu_tester =
+        ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type.clone()]);
+
     let mut group = c.benchmark_group("spatial_join");
     // Reduce sample count to 10 for faster benchmarking
     group.sample_size(10);
-    
+
     // Test different data sizes
     let test_sizes = vec![
         (100, 1000),   // 100 polygons, 1000 points
@@ -326,7 +328,7 @@ fn benchmark_spatial_join(c: &mut Criterion) {
     for (num_polygons, num_points) in test_sizes {
         let polygons = generate_random_polygons(num_polygons, 1.0);
         let points = generate_random_points(num_points);
-        
+
         // Pre-create all data structures (NOT timed)
         let data = prepare_benchmark_data(&polygons, &points);
 
@@ -335,9 +337,7 @@ fn benchmark_spatial_join(c: &mut Criterion) {
             BenchmarkId::new("GPU", format!("{}x{}", num_polygons, num_points)),
             &data,
             |b, data| {
-                b.iter(|| {
-                    bench_gpu_spatial_join(&rt, data)
-                });
+                b.iter(|| bench_gpu_spatial_join(&rt, data));
             },
         );
 
@@ -347,9 +347,7 @@ fn benchmark_spatial_join(c: &mut Criterion) {
                 BenchmarkId::new("CPU", format!("{}x{}", num_polygons, num_points)),
                 &data,
                 |b, data| {
-                    b.iter(|| {
-                        bench_cpu_spatial_join(data, &cpu_tester)
-                    });
+                    b.iter(|| bench_cpu_spatial_join(data, &cpu_tester));
                 },
             );
         }
