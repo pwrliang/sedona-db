@@ -48,14 +48,6 @@ use sedona_spatial_join_gpu::{
 use std::fs::File;
 use std::sync::Arc;
 
-// Helper to create test geometry data
-// fn create_point_wkb(x: f64, y: f64) -> Vec<u8> {
-//     let mut wkb = vec![0x01, 0x01, 0x00, 0x00, 0x00]; // Little endian point type
-//     wkb.extend_from_slice(&x.to_le_bytes());
-//     wkb.extend_from_slice(&y.to_le_bytes());
-//     wkb
-// }
-
 /// Check if GPU is actually available
 fn is_gpu_available() -> bool {
     use sedona_libgpuspatial::GpuSpatialContext;
@@ -65,123 +57,6 @@ fn is_gpu_available() -> bool {
         Err(_) => false,
     }
 }
-
-/// Mock execution plan that produces geometry data
-/*
-struct GeometryDataExec {
-    schema: Arc<Schema>,
-    batch: RecordBatch,
-}
-
-impl GeometryDataExec {
-    fn new(ids: Vec<i32>, geometries: Vec<Vec<u8>>) -> Self {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int32, false),
-            Field::new("geometry", DataType::Binary, false),
-        ]));
-
-        let id_array = Int32Array::from(ids);
-
-        // Build BinaryArray using builder to avoid lifetime issues
-        let mut builder = arrow_array::builder::BinaryBuilder::new();
-        for geom in geometries {
-            builder.append_value(&geom);
-        }
-        let geom_array = builder.finish();
-
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![Arc::new(id_array), Arc::new(geom_array)],
-        )
-        .unwrap();
-
-        Self { schema, batch }
-    }
-}
-
-impl std::fmt::Debug for GeometryDataExec {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "GeometryDataExec")
-    }
-}
-
-impl datafusion::physical_plan::DisplayAs for GeometryDataExec {
-    fn fmt_as(
-        &self,
-        _t: datafusion::physical_plan::DisplayFormatType,
-        f: &mut std::fmt::Formatter,
-    ) -> std::fmt::Result {
-        write!(f, "GeometryDataExec")
-    }
-}
-
-impl ExecutionPlan for GeometryDataExec {
-    fn name(&self) -> &str {
-        "GeometryDataExec"
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn schema(&self) -> Arc<Schema> {
-        self.schema.clone()
-    }
-
-    fn properties(&self) -> &datafusion::physical_plan::PlanProperties {
-        unimplemented!("properties not needed for test")
-    }
-
-    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
-        vec![]
-    }
-
-    fn with_new_children(
-        self: Arc<Self>,
-        _children: Vec<Arc<dyn ExecutionPlan>>,
-    ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
-        Ok(self)
-    }
-
-    fn execute(
-        &self,
-        _partition: usize,
-        _context: Arc<TaskContext>,
-    ) -> datafusion_common::Result<datafusion::physical_plan::SendableRecordBatchStream> {
-        use datafusion::physical_plan::{RecordBatchStream, SendableRecordBatchStream};
-        use futures::Stream;
-        use std::pin::Pin;
-        use std::task::{Context, Poll};
-
-        struct SingleBatchStream {
-            schema: Arc<Schema>,
-            batch: Option<RecordBatch>,
-        }
-
-        impl Stream for SingleBatchStream {
-            type Item = datafusion_common::Result<RecordBatch>;
-
-            fn poll_next(
-                mut self: Pin<&mut Self>,
-                _cx: &mut Context<'_>,
-            ) -> Poll<Option<Self::Item>> {
-                Poll::Ready(self.batch.take().map(Ok))
-            }
-        }
-
-        impl RecordBatchStream for SingleBatchStream {
-            fn schema(&self) -> Arc<Schema> {
-                self.schema.clone()
-            }
-        }
-
-        Ok(Box::pin(SingleBatchStream {
-            schema: self.schema.clone(),
-            batch: Some(self.batch.clone()),
-        }) as SendableRecordBatchStream)
-    }
-}
-*/
 
 #[tokio::test]
 #[ignore] // Requires GPU hardware
