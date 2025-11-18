@@ -97,8 +97,7 @@ jobs:
         env:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
           CMAKE_TOOLCHAIN_FILE: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
-          # CUDA configuration (CUDA 12.4 installs to /usr/local/cuda-12.4)
-          CUDA_HOME: /usr/local/cuda-12.4
+          CUDA_HOME: /usr/local/cuda
         run: |
           cd vcpkg
           ./bootstrap-vcpkg.sh
@@ -109,21 +108,17 @@ jobs:
           echo "CMAKE_TOOLCHAIN_FILE=$CMAKE_TOOLCHAIN_FILE" >> $GITHUB_ENV
           echo "/usr/local/cuda/bin" >> $GITHUB_PATH
 
-      # Free up disk space before build
-      - name: Free disk space
-        run: |
-          # Remove unnecessary packages to free up ~10GB
-          sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' 'php.*' '^mongodb-.*' '^mysql-.*' azure-cli google-chrome-stable firefox powershell mono-devel libgl1-mesa-dri || true
-          sudo apt-get autoremove -y
-          sudo apt-get clean
-
-          # Remove large directories
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
-
-      - name: Setup tmate session
-        uses: mxschmitt/action-tmate@v3
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
         with:
-          timeout-minutes: 120
+          # Free up space by removing tools we don't need
+          tool-cache: false  # Keep tool cache as we need build tools
+          android: true      # Remove Android SDK (not needed)
+          dotnet: true       # Remove .NET runtime (not needed)
+          haskell: true      # Remove Haskell toolchain (not needed)
+          large-packages: false  # Keep essential packages including build-essential
+          swap-storage: true     # Remove swap file to free space
+          docker-images: true    # Remove docker images (not needed)
 
       # Install system dependencies including CUDA toolkit for compilation
       - name: Install system dependencies
@@ -150,28 +145,27 @@ jobs:
           cmake --version
 
           # Install GEOS for spatial operations
-          sudo apt-get install -y libgeos-dev libzstd-dev
+          sudo apt-get install -y libgeos-dev
 
           # Install CUDA toolkit for compilation (nvcc)
           # Note: CUDA compilation works without GPU hardware
           # GPU runtime tests still require actual GPU
-          # CUDA 12.4 supports GCC 11 (default on Ubuntu 22.04)
           if ! command -v nvcc &> /dev/null; then
-            echo "Installing CUDA 12.4 toolkit for compilation..."
+            echo "Installing CUDA 12 toolkit for compilation..."
 
             # Add NVIDIA CUDA repository
-            wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+            wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
             sudo dpkg -i cuda-keyring_1.1-1_all.deb
             sudo apt-get update
 
             # Remove any existing CUDA toolkit
             sudo apt purge cuda-toolkit* -y || true
 
-            # Install CUDA 12.4 specifically
-            sudo apt-get install -y cuda-toolkit-12-4
+            # Install CUDA 12
+            sudo apt-get install -y cuda-toolkit-12
 
             # Set CUDA path
-            echo "/usr/local/cuda-12.4/bin" >> $GITHUB_PATH
+            echo "/usr/local/cuda/bin" >> $GITHUB_PATH
 
             nvcc --version
           else
@@ -191,7 +185,7 @@ jobs:
       - name: Install vcpkg dependencies
         if: steps.cache-vcpkg.outputs.cache-hit != 'true'
         run: |
-          ./vcpkg/vcpkg install abseil openssl gtest
+          ./vcpkg/vcpkg install abseil openssl
           # Clean up vcpkg buildtrees and downloads to save space
           rm -rf vcpkg/buildtrees
           rm -rf vcpkg/downloads

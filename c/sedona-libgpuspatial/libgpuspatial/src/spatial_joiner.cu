@@ -1,9 +1,25 @@
+
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #include "gpuspatial/index/detail/launch_parameters.h"
 #include "gpuspatial/index/relate_engine.cuh"
 #include "gpuspatial/index/spatial_joiner.cuh"
 #include "gpuspatial/loader/parallel_wkb_loader.h"
 #include "gpuspatial/utils/logger.hpp"
-#include "gpuspatial/utils/markers.hpp"
 #include "gpuspatial/utils/stopwatch.h"
 
 #include "rt/shaders/shader_id.hpp"
@@ -68,7 +84,6 @@ void SpatialJoiner::Clear() {
 
 void SpatialJoiner::PushBuild(const ArrowSchema* schema, const ArrowArray* array,
                               int64_t offset, int64_t length) {
-  IntervalRangeMarker marker(array->length, "PushBuild");
   GPUSPATIAL_LOG_INFO("SpatialJoiner %p (Free %zu MB), PushBuild, offset %ld, length %ld",
                       this, rmm::available_device_memory().first / 1024 / 1024, offset,
                       length);
@@ -76,7 +91,6 @@ void SpatialJoiner::PushBuild(const ArrowSchema* schema, const ArrowArray* array
 }
 
 void SpatialJoiner::FinishBuilding() {
-  RangeMarker marker(true, "FinishBuilding");
   auto stream = rmm::cuda_stream_default;
 
   build_geometries_ = std::move(build_loader_->Finish(stream));
@@ -110,8 +124,6 @@ void SpatialJoiner::PushStream(Context* base_ctx, const ArrowSchema* schema,
                                Predicate predicate, std::vector<uint32_t>* build_indices,
                                std::vector<uint32_t>* stream_indices,
                                int32_t array_index_offset) {
-  IntervalRangeMarker marker(length, "PushStream");
-
   auto* ctx = (SpatialJoinerContext*)base_ctx;
   ctx->cuda_stream = stream_pool_->get_stream();
 

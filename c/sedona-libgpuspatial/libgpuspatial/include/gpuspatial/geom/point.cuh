@@ -1,3 +1,4 @@
+
 #pragma once
 #include "gpuspatial/geom/box.cuh"
 #include "gpuspatial/utils/array_view.h"
