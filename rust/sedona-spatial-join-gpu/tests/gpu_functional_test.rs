@@ -420,7 +420,6 @@ impl datafusion::physical_plan::ExecutionPlan for SingleBatchExec {
 #[tokio::test]
 #[ignore] // Requires GPU hardware
 async fn test_gpu_spatial_join_correctness() {
-    use arrow_array::builder::BinaryBuilder;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_geos::register::scalar_kernels;
     use sedona_schema::crs::lnglat;

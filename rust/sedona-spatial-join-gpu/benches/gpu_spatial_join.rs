@@ -285,7 +285,7 @@ fn bench_cpu_spatial_join(
                 .invoke_scalar_scalar(poly.as_str(), point.as_str())
                 .unwrap();
 
-            if result == Some(true).unwrap().into() {
+            if result == true.into() {
                 result_count += 1;
             }
         }

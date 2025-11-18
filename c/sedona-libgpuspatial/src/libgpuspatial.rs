@@ -58,6 +58,12 @@ impl TryFrom<c_uint> for GpuSpatialPredicateWrapper {
     }
 }
 
+impl Default for GpuSpatialJoinerWrapper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GpuSpatialJoinerWrapper {
     pub fn new() -> Self {
         GpuSpatialJoinerWrapper {
@@ -485,7 +491,7 @@ mod test {
                 let result = tester
                     .invoke_scalar_scalar(poly.unwrap(), point.unwrap())
                     .unwrap();
-                if result == Some(true).unwrap().into() {
+                if result == true.into() {
                     answer_pairs.push((poly_index as u32, point_index as u32));
                 }
             }

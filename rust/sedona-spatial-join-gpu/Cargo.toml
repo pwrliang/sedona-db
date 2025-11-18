@@ -78,3 +78,8 @@ features = ["async_tokio"]
 
 [dev-dependencies.rand]
 version = "0.8"
+
+[lints.rust]
+# This tells the compiler/clippy that cfg(gpu_available) is a valid,
+# expected configuration conditional.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(gpu_available)'] }

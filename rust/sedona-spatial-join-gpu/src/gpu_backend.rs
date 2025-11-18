@@ -16,7 +16,7 @@
 // under the License.
 use crate::Result;
 use arrow::compute::take;
-use arrow_array::{Array, ArrayRef, BinaryArray, RecordBatch, UInt32Array};
+use arrow_array::{Array, ArrayRef, RecordBatch, UInt32Array};
 use arrow_schema::{DataType, Schema};
 use sedona_libgpuspatial::{GpuSpatialContext, SpatialPredicate};
 use std::sync::Arc;
@@ -69,7 +69,7 @@ impl GpuBackend {
             DataType::BinaryView => {
                 // OPTIMIZATION: Use Arrow's cast which is much faster than manual iteration
                 use arrow::compute::cast;
-                cast(array.as_ref(), &DataType::Binary).map_err(|e| crate::Error::Arrow(e))
+                cast(array.as_ref(), &DataType::Binary).map_err(crate::Error::Arrow)
             }
             DataType::Binary | DataType::LargeBinary => {
                 // Already in correct format
@@ -124,6 +124,7 @@ impl GpuBackend {
         );
 
         // Debug: Print raw binary data before sending to GPU
+        /*
         if let Some(left_binary) = left_geom.as_any().downcast_ref::<BinaryArray>() {
             for i in 0..left_binary.len().min(5) {
                 if !left_binary.is_null(i) {
@@ -149,16 +150,16 @@ impl GpuBackend {
                 }
             }
         }
-
+        */
         // Perform GPU spatial join (includes: data transfer, BVH build, and join kernel)
         //         println!("[GPU Join] Starting GPU spatial join computation");
         //         println!("DEBUG: left_batch.num_rows()={}, left_geom.len()={}", left_batch.num_rows(), left_geom.len());
         //         println!("DEBUG: right_batch.num_rows()={}, right_geom.len()={}", right_batch.num_rows(), right_geom.len());
-        let gpu_total_start = Instant::now();
+        // let gpu_total_start = Instant::now();
         // OPTIMIZATION: Remove clones - Arc is cheap to clone, but avoid if possible
         match gpu_ctx.spatial_join(left_geom.clone(), right_geom.clone(), predicate) {
             Ok((build_indices, stream_indices)) => {
-                let gpu_total_elapsed = gpu_total_start.elapsed();
+                // let gpu_total_elapsed = gpu_total_start.elapsed();
                 //                 println!("[GPU Join] GPU spatial join complete in {:.3}s total (see phase breakdown above)", gpu_total_elapsed.as_secs_f64());
                 //                 println!("[GPU Join] Materializing result batch from GPU indices");
 
@@ -204,7 +205,7 @@ impl GpuBackend {
         let mut left_arrays: Vec<ArrayRef> = Vec::new();
         for i in 0..left_batch.num_columns() {
             let column = left_batch.column(i);
-            let max_build_idx = build_idx_array.values().iter().max().copied().unwrap_or(0);
+            // let max_build_idx = build_idx_array.values().iter().max().copied().unwrap_or(0);
             //             println!("DEBUG take: left column {}, array len={}, using build_idx_array len={}, max_idx={}",
             //                 i, column.len(), build_idx_array.len(), max_build_idx);
             let selected = take(column.as_ref(), &build_idx_array, None)?;
@@ -215,7 +216,7 @@ impl GpuBackend {
         let mut right_arrays: Vec<ArrayRef> = Vec::new();
         for i in 0..right_batch.num_columns() {
             let column = right_batch.column(i);
-            let max_stream_idx = stream_idx_array.values().iter().max().copied().unwrap_or(0);
+            // let max_stream_idx = stream_idx_array.values().iter().max().copied().unwrap_or(0);
             //             println!("DEBUG take: right column {}, array len={}, using stream_idx_array len={}, max_idx={}",
             //                 i, column.len(), stream_idx_array.len(), max_stream_idx);
             let selected = take(column.as_ref(), &stream_idx_array, None)?;

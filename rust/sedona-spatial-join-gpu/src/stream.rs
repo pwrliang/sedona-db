@@ -24,11 +24,9 @@ use arrow::datatypes::SchemaRef;
 use arrow_array::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
-use datafusion::physical_plan::ExecutionPlanProperties;
 use datafusion::physical_plan::{ExecutionPlan, RecordBatchStream, SendableRecordBatchStream};
 use datafusion_physical_plan::metrics::{self, ExecutionPlanMetricsSet, MetricBuilder};
 use futures::stream::Stream;
-use futures::FutureExt;
 
 use crate::config::GpuSpatialJoinConfig;
 use crate::gpu_backend::GpuBackend;
@@ -42,7 +40,7 @@ use std::time::Instant;
 /// 3. Read data from right child stream
 /// 4. Execute GPU spatial join
 /// 5. Emit result batches
-/// Metrics for GPU spatial join operations
+///    Metrics for GPU spatial join operations
 pub(crate) struct GpuSpatialJoinMetrics {
     /// Total time for GPU join execution
     pub(crate) join_time: metrics::Time,
