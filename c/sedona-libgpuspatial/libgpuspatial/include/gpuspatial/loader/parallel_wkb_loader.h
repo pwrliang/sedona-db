@@ -798,6 +798,11 @@ class ParallelWkbLoader {
           NANOARROW_THROW_NOT_OK(detail::WKBReaderReadEndian(s, &error));
           uint32_t geometry_type;
           NANOARROW_THROW_NOT_OK(detail::WKBReaderReadUInt32(s, &geometry_type, &error));
+          if (geometry_type > 7) {
+            throw std::runtime_error(
+                "Extended WKB types are not currently supported, type = " +
+                std::to_string(geometry_type));
+          }
           assert(geometry_type < type_flags.size());
           type_flags[geometry_type] = true;
         }

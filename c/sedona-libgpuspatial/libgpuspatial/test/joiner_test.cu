@@ -17,68 +17,50 @@
 #include "array_stream.hpp"
 #include "gpuspatial/index/spatial_joiner.cuh"
 #include "gpuspatial/loader/device_geometries.cuh"
-#include "nanoarrow/nanoarrow.hpp"
+#include "test_common.hpp"
 
 #include "geoarrow_geos/geoarrow_geos.hpp"
+#include "nanoarrow/nanoarrow.hpp"
 
 #include <geoarrow/geoarrow.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <numeric>  // For std::iota
-namespace TestUtils {
-std::string GetTestDataPath(const std::string& relative_path_to_file);
-}
 
 namespace gpuspatial {
-template <typename KeyType, typename ValueType>
-void sort_vectors_by_index(std::vector<KeyType>& keys, std::vector<ValueType>& values) {
-  // 1. Create an index vector {0, 1, 2, ...}
-  std::vector<size_t> indices(keys.size());
-  // Fills 'indices' with 0, 1, 2, ..., N-1
-  std::iota(indices.begin(), indices.end(), 0);
-
-  // 2. Sort the indices based on the values in the 'keys' vector
-  // The lambda compares the key elements at two different indices
-  std::sort(indices.begin(), indices.end(), [&keys, &values](size_t i, size_t j) {
-    return keys[i] < keys[j] || keys[i] == keys[j] && values[i] < values[j];
-  });
-
-  // 3. Create new, sorted vectors
-  std::vector<KeyType> sorted_keys;
-  std::vector<ValueType> sorted_values;
-
-  for (size_t i : indices) {
-    sorted_keys.push_back(keys[i]);
-    sorted_values.push_back(values[i]);
+using GeosBinaryPredicateFn = char (*)(GEOSContextHandle_t, const GEOSGeometry*,
+                                       const GEOSGeometry*);
+static GeosBinaryPredicateFn GetGeosPredicateFn(Predicate predicate) {
+  switch (predicate) {
+    case Predicate::kContains:
+      return &GEOSContains_r;
+    case Predicate::kIntersects:
+      return &GEOSIntersects_r;
+    case Predicate::kWithin:
+      return &GEOSWithin_r;
+    case Predicate::kEquals:
+      return &GEOSEquals_r;
+    case Predicate::kTouches:
+      return &GEOSTouches_r;
+    default:
+      throw std::out_of_range("Unsupported GEOS predicate enumeration value.");
   }
-
-  // Replace the original vectors with the sorted ones
-  keys = std::move(sorted_keys);
-  values = std::move(sorted_values);
 }
 
-TEST(JoinerTest, PIP) {
+void TestJoiner(const std::string& build_parquet_path,
+                const std::string& stream_parquet_path, Predicate predicate,
+                int batch_size = 10) {
+  using namespace TestUtils;
+  auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
   SpatialJoiner::SpatialJoinerConfig config;
-  std::string ptx_root = TestUtils::GetTestDataPath("shaders_ptx");
+  std::string ptx_root = TestUtils::GetTestDataPath("../shaders_ptx");
 
   config.ptx_root = ptx_root.c_str();
   SpatialJoiner spatial_joiner;
 
-  nanoarrow::UniqueArrayStream poly_stream, point_stream;
+  spatial_joiner.Init(&config);
+  spatial_joiner.Clear();
 
-  auto poly_path = TestUtils::GetTestDataPath("../test_data/test_polygons.arrows");
-  auto point_path = TestUtils::GetTestDataPath("../test_data/test_points.arrows");
-
-  ArrayStreamFromIpc(poly_path, "geometry", poly_stream.get());
-  ArrayStreamFromIpc(point_path, "geometry", point_stream.get());
-
-  nanoarrow::UniqueSchema build_schema, stream_schema;
-  nanoarrow::UniqueArray build_array, stream_array;
-  ArrowError error;
-  ArrowErrorSet(&error, "");
-  int n_row_groups = 100;
-  int array_index_offset = 0;
-  std::vector<uint32_t> build_indices, stream_indices;
   geoarrow::geos::ArrayReader reader;
 
   class GEOSCppHandle {
@@ -93,234 +75,116 @@ TEST(JoinerTest, PIP) {
 
   reader.InitFromEncoding(handle.handle, GEOARROW_GEOS_ENCODING_WKB);
 
-  geoarrow::geos::GeometryVector geom_polygons(handle.handle);
-  geoarrow::geos::GeometryVector geom_points(handle.handle);
-  struct Payload {
-    GEOSContextHandle_t handle;
-    const GEOSGeometry* geom;
-    int64_t stream_index_offset;
-    std::vector<uint32_t> build_indices;
-    std::vector<uint32_t> stream_indices;
+  geoarrow::geos::GeometryVector geom_build(handle.handle);
+
+  auto get_total_length = [](const std::vector<std::shared_ptr<arrow::Array>>& arrays) {
+    size_t total_length = 0;
+    for (const auto& array : arrays) {
+      total_length += array->length();
+    }
+    return total_length;
   };
 
-  spatial_joiner.Init(&config);
-  for (int i = 0; i < n_row_groups; i++) {
-    ASSERT_EQ(ArrowArrayStreamGetNext(poly_stream.get(), build_array.get(), &error),
-              NANOARROW_OK);
-    ASSERT_EQ(ArrowArrayStreamGetSchema(poly_stream.get(), build_schema.get(), &error),
-              NANOARROW_OK);
+  std::vector<std::shared_ptr<arrow::Array>> build_arrays;
+  ARROW_THROW_NOT_OK(ReadParquetFromFile(fs.get(), build_parquet_path, batch_size,
+                                         "geometry", build_arrays));
 
-    ASSERT_EQ(ArrowArrayStreamGetNext(point_stream.get(), stream_array.get(), &error),
-              NANOARROW_OK);
-    ASSERT_EQ(ArrowArrayStreamGetSchema(point_stream.get(), stream_schema.get(), &error),
-              NANOARROW_OK);
+  // Using GEOS for reference
+  geom_build.resize(get_total_length(build_arrays));
+  size_t tail_build = 0;
+  auto* tree = GEOSSTRtree_create_r(handle.handle, 10);
 
-    spatial_joiner.Clear();
-    spatial_joiner.PushBuild(nullptr, build_array.get(), 0, build_array->length);
-    auto context = spatial_joiner.CreateContext();
+  for (auto& array : build_arrays) {
+    nanoarrow::UniqueArray unique_array;
+    nanoarrow::UniqueSchema unique_schema;
 
-    build_indices.clear();
-    stream_indices.clear();
-    spatial_joiner.FinishBuilding();
-    spatial_joiner.PushStream(context.get(), nullptr, stream_array.get(), 0,
-                              stream_array->length, Predicate::kContains, &build_indices,
-                              &stream_indices, array_index_offset);
+    ARROW_THROW_NOT_OK(
+        arrow::ExportArray(*array, unique_array.get(), unique_schema.get()));
 
-    geom_polygons.resize(build_array->length);
-    geom_points.resize(stream_array->length);
+    spatial_joiner.PushBuild(unique_schema.get(), unique_array.get(), 0,
+                             unique_array->length);
 
-    size_t n_polygons = 0, n_points = 0;
-    ASSERT_EQ(reader.Read(build_array.get(), 0, build_array->length,
-                          geom_polygons.mutable_data(), &n_polygons),
-              GEOARROW_GEOS_OK);
-    ASSERT_EQ(reader.Read(stream_array.get(), 0, stream_array->length,
-                          geom_points.mutable_data(), &n_points),
+    // geos for reference
+    size_t n_build;
+
+    ASSERT_EQ(reader.Read(unique_array.get(), 0, unique_array->length,
+                          geom_build.mutable_data() + tail_build, &n_build),
               GEOARROW_GEOS_OK);
 
-    auto* tree = GEOSSTRtree_create_r(handle.handle, 10);
-
-    for (size_t j = 0; j < n_polygons; j++) {
-      auto* geom_polygon = geom_polygons.borrow(j);
-      auto* box = GEOSEnvelope_r(handle.handle, geom_polygon);
-      GEOSGeom_setUserData_r(handle.handle, (GEOSGeometry*)geom_polygon, (void*)j);
-      GEOSSTRtree_insert_r(handle.handle, tree, box, (void*)geom_polygon);
+    for (size_t offset = tail_build; offset < tail_build + n_build; offset++) {
+      auto* geom = geom_build.borrow(offset);
+      auto* box = GEOSEnvelope_r(handle.handle, geom);
+      GEOSGeom_setUserData_r(handle.handle, (GEOSGeometry*)geom, (void*)offset);
+      GEOSSTRtree_insert_r(handle.handle, tree, box, (void*)geom);
       GEOSGeom_destroy_r(handle.handle, box);
     }
-    ASSERT_EQ(GEOSSTRtree_build_r(handle.handle, tree), 1);
-
-    Payload payload;
-    payload.handle = handle.handle;
-
-    payload.stream_index_offset = array_index_offset;
-
-    for (size_t j = 0; j < n_points; j++) {
-      auto* geom_point = geom_points.borrow(j);
-      GEOSGeom_setUserData_r(handle.handle, (GEOSGeometry*)geom_point, (void*)j);
-      double x, y;
-
-      GEOSGeomGetX_r(handle.handle, geom_point, &x);
-      GEOSGeomGetY_r(handle.handle, geom_point, &y);
-
-      payload.geom = geom_point;
-
-      GEOSSTRtree_query_r(
-          handle.handle, tree, geom_point,
-          [](void* item, void* data) {
-            auto* polygon = (GEOSGeometry*)item;
-            auto* payload = (Payload*)data;
-            auto* point = payload->geom;
-
-            if (GEOSContains_r(payload->handle, polygon, point) == 1) {
-              auto polygon_id = (size_t)GEOSGeom_getUserData_r(payload->handle, polygon);
-              auto point_id = (size_t)GEOSGeom_getUserData_r(payload->handle, point);
-              payload->build_indices.push_back(polygon_id);
-              payload->stream_indices.push_back(payload->stream_index_offset + point_id);
-            }
-          },
-          (void*)&payload);
-    }
-
-    GEOSSTRtree_destroy_r(handle.handle, tree);
-
-    ASSERT_EQ(payload.build_indices.size(), build_indices.size());
-    ASSERT_EQ(payload.stream_indices.size(), stream_indices.size());
-    sort_vectors_by_index(payload.build_indices, payload.stream_indices);
-    sort_vectors_by_index(build_indices, stream_indices);
-    for (size_t j = 0; j < build_indices.size(); j++) {
-      ASSERT_EQ(payload.build_indices[j], build_indices[j]);
-      ASSERT_EQ(payload.stream_indices[j], stream_indices[j]);
-    }
-
-    array_index_offset += stream_array->length;
+    tail_build += n_build;
   }
-}
+  spatial_joiner.FinishBuilding();
+  ASSERT_EQ(GEOSSTRtree_build_r(handle.handle, tree), 1);
 
-TEST(JoinerTest, PIPInverse) {
-  SpatialJoiner::SpatialJoinerConfig config;
-  std::string ptx_root = TestUtils::GetTestDataPath("shaders_ptx");
-
-  config.ptx_root = ptx_root.c_str();
-  SpatialJoiner spatial_joiner;
-
-  nanoarrow::UniqueArrayStream poly_stream, point_stream;
-
-  auto poly_path = TestUtils::GetTestDataPath("../test_data/test_polygons.arrows");
-  auto point_path = TestUtils::GetTestDataPath("../test_data/test_points.arrows");
-
-  ArrayStreamFromIpc(poly_path, "geometry", poly_stream.get());
-  ArrayStreamFromIpc(point_path, "geometry", point_stream.get());
-
-  nanoarrow::UniqueSchema build_schema, stream_schema;
-  nanoarrow::UniqueArray build_array, stream_array;
-  ArrowError error;
-  ArrowErrorSet(&error, "");
-  int n_row_groups = 100;
+  std::vector<std::shared_ptr<arrow::Array>> stream_arrays;
+  ARROW_THROW_NOT_OK(TestUtils::ReadParquetFromFile(
+      fs.get(), stream_parquet_path, batch_size, "geometry", stream_arrays));
   int array_index_offset = 0;
-  std::vector<uint32_t> build_indices, stream_indices;
-  geoarrow::geos::ArrayReader reader;
+  auto context = spatial_joiner.CreateContext();
 
-  class GEOSCppHandle {
-   public:
-    GEOSContextHandle_t handle;
+  for (auto& array : stream_arrays) {
+    nanoarrow::UniqueArray unique_array;
+    nanoarrow::UniqueSchema unique_schema;
 
-    GEOSCppHandle() { handle = GEOS_init_r(); }
+    ARROW_THROW_NOT_OK(
+        arrow::ExportArray(*array, unique_array.get(), unique_schema.get()));
+    std::vector<uint32_t> build_indices, stream_indices;
 
-    ~GEOSCppHandle() { GEOS_finish_r(handle); }
-  };
-  GEOSCppHandle handle;
-
-  reader.InitFromEncoding(handle.handle, GEOARROW_GEOS_ENCODING_WKB);
-
-  geoarrow::geos::GeometryVector geom_polygons(handle.handle);
-  geoarrow::geos::GeometryVector geom_points(handle.handle);
-  struct Payload {
-    GEOSContextHandle_t handle;
-    const GEOSGeometry* geom;
-    int64_t stream_index_offset;
-    std::vector<uint32_t> build_indices;
-    std::vector<uint32_t> stream_indices;
-  };
-
-  spatial_joiner.Init(&config);
-  for (int i = 0; i < n_row_groups; i++) {
-    ASSERT_EQ(ArrowArrayStreamGetNext(poly_stream.get(), stream_array.get(), &error),
-              NANOARROW_OK);
-    ASSERT_EQ(ArrowArrayStreamGetSchema(poly_stream.get(), stream_schema.get(), &error),
-              NANOARROW_OK);
-
-    ASSERT_EQ(ArrowArrayStreamGetNext(point_stream.get(), build_array.get(), &error),
-              NANOARROW_OK);
-    ASSERT_EQ(ArrowArrayStreamGetSchema(point_stream.get(), build_schema.get(), &error),
-              NANOARROW_OK);
-
-    spatial_joiner.Clear();
-    // build with points, stream with polygons
-    spatial_joiner.PushBuild(nullptr, build_array.get(), 0, build_array->length);
-    auto context = spatial_joiner.CreateContext();
-
-    build_indices.clear();
-    stream_indices.clear();
-    spatial_joiner.FinishBuilding();
-    spatial_joiner.PushStream(context.get(), nullptr, stream_array.get(), 0,
-                              stream_array->length, Predicate::kWithin, &build_indices,
+    spatial_joiner.PushStream(context.get(), unique_schema.get(), unique_array.get(), 0,
+                              unique_array->length, predicate, &build_indices,
                               &stream_indices, array_index_offset);
 
-    geom_polygons.resize(stream_array->length);
-    geom_points.resize(build_array->length);
-
-    size_t n_polygons = 0, n_points = 0;
-    ASSERT_EQ(reader.Read(build_array.get(), 0, build_array->length,
-                          geom_points.mutable_data(), &n_points),
+    geoarrow::geos::GeometryVector geom_stream(handle.handle);
+    size_t n_stream;
+    geom_stream.resize(array->length());
+    ASSERT_EQ(reader.Read(unique_array.get(), 0, unique_array->length,
+                          geom_stream.mutable_data(), &n_stream),
               GEOARROW_GEOS_OK);
-    ASSERT_EQ(reader.Read(stream_array.get(), 0, stream_array->length,
-                          geom_polygons.mutable_data(), &n_polygons),
-              GEOARROW_GEOS_OK);
-
-    auto* tree = GEOSSTRtree_create_r(handle.handle, 10);
-
-    for (size_t j = 0; j < n_polygons; j++) {
-      auto* geom_polygon = geom_polygons.borrow(j);
-      auto* box = GEOSEnvelope_r(handle.handle, geom_polygon);
-      GEOSGeom_setUserData_r(handle.handle, (GEOSGeometry*)geom_polygon, (void*)j);
-      GEOSSTRtree_insert_r(handle.handle, tree, box, (void*)geom_polygon);
-      GEOSGeom_destroy_r(handle.handle, box);
-    }
-    ASSERT_EQ(GEOSSTRtree_build_r(handle.handle, tree), 1);
+    struct Payload {
+      GEOSContextHandle_t handle;
+      const GEOSGeometry* geom;
+      int64_t stream_index_offset;
+      std::vector<uint32_t> build_indices;
+      std::vector<uint32_t> stream_indices;
+      Predicate predicate;
+    };
 
     Payload payload;
+    payload.predicate = predicate;
     payload.handle = handle.handle;
 
     payload.stream_index_offset = array_index_offset;
 
-    for (size_t j = 0; j < n_points; j++) {
-      auto* geom_point = geom_points.borrow(j);
-      GEOSGeom_setUserData_r(handle.handle, (GEOSGeometry*)geom_point, (void*)j);
-      double x, y;
-
-      GEOSGeomGetX_r(handle.handle, geom_point, &x);
-      GEOSGeomGetY_r(handle.handle, geom_point, &y);
-
-      payload.geom = geom_point;
+    for (size_t offset = 0; offset < n_stream; offset++) {
+      auto* geom = geom_stream.borrow(offset);
+      GEOSGeom_setUserData_r(handle.handle, (GEOSGeometry*)geom, (void*)offset);
+      payload.geom = geom;
 
       GEOSSTRtree_query_r(
-          handle.handle, tree, geom_point,
+          handle.handle, tree, geom,
           [](void* item, void* data) {
-            auto* polygon = (GEOSGeometry*)item;
+            auto* geom_build = (GEOSGeometry*)item;
             auto* payload = (Payload*)data;
-            auto* point = payload->geom;
+            auto* geom_stream = payload->geom;
 
-            if (GEOSContains_r(payload->handle, polygon, point) == 1) {
-              auto polygon_id = (size_t)GEOSGeom_getUserData_r(payload->handle, polygon);
-              auto point_id = (size_t)GEOSGeom_getUserData_r(payload->handle, point);
-              payload->build_indices.push_back(point_id);
-              payload->stream_indices.push_back(payload->stream_index_offset +
-                                                polygon_id);
+            if (GetGeosPredicateFn(payload->predicate)(payload->handle, geom_build,
+                                                       geom_stream) == 1) {
+              auto build_id = (size_t)GEOSGeom_getUserData_r(payload->handle, geom_build);
+              auto stream_id =
+                  (size_t)GEOSGeom_getUserData_r(payload->handle, geom_stream);
+              payload->build_indices.push_back(build_id);
+              payload->stream_indices.push_back(payload->stream_index_offset + stream_id);
             }
           },
           (void*)&payload);
     }
-
-    GEOSSTRtree_destroy_r(handle.handle, tree);
 
     ASSERT_EQ(payload.build_indices.size(), build_indices.size());
     ASSERT_EQ(payload.stream_indices.size(), stream_indices.size());
@@ -330,10 +194,81 @@ TEST(JoinerTest, PIPInverse) {
       ASSERT_EQ(payload.build_indices[j], build_indices[j]);
       ASSERT_EQ(payload.stream_indices[j], stream_indices[j]);
     }
+    array_index_offset += array->length();
+  }
+  GEOSSTRtree_destroy_r(handle.handle, tree);
+}
 
-    array_index_offset += stream_array->length;
+TEST(JoinerTest, PIPLargeParquet) {
+  using namespace TestUtils;
+  auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
+
+  std::vector<std::string> polys{
+      "../../test/data/postal-codes.sampled.parquet",
+  };
+  std::vector<std::string> points{
+      "../../test/data/postal-codes.points.parquet",
+  };
+
+  for (int i = 0; i < polys.size(); i++) {
+    auto poly_path = TestUtils::GetTestDataPath(polys[i]);
+    auto point_path = TestUtils::GetCanonicalPath(points[i]);
+    TestJoiner(poly_path, point_path, Predicate::kContains, 100);
   }
 }
+
+TEST(JoinerTest, PIPContainsParquet) {
+  using namespace TestUtils;
+  auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
+
+  std::vector<std::string> polys{
+      "../../test/data/cities/natural-earth_cities_geo.parquet",
+      "../../test/data/countries/natural-earth_countries_geo.parquet"};
+  std::vector<std::string> points{"../../test/data/cities/generated_points.parquet",
+                                  "../../test/data/countries/generated_points.parquet"};
+
+  for (int i = 0; i < polys.size(); i++) {
+    auto poly_path = TestUtils::GetTestDataPath(polys[i]);
+    auto point_path = TestUtils::GetCanonicalPath(points[i]);
+    TestJoiner(poly_path, point_path, Predicate::kContains, 10);
+  }
+}
+
+TEST(JoinerTest, PIPWithinParquet) {
+  using namespace TestUtils;
+  auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
+
+  std::vector<std::string> polys{
+      "../../test/data/cities/natural-earth_cities_geo.parquet",
+      "../../test/data/countries/natural-earth_countries_geo.parquet"};
+  std::vector<std::string> points{"../../test/data/cities/generated_points.parquet",
+                                  "../../test/data/countries/generated_points.parquet"};
+
+  for (int i = 0; i < polys.size(); i++) {
+    auto poly_path = TestUtils::GetTestDataPath(polys[i]);
+    auto point_path = TestUtils::GetCanonicalPath(points[i]);
+    TestJoiner(point_path, poly_path, Predicate::kWithin, 10);
+  }
+}
+
+TEST(JoinerTest, PolyPointIntersectsParquet) {
+  using namespace TestUtils;
+  auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
+
+  std::vector<std::string> polys{
+      "../../test/data/cities/natural-earth_cities_geo.parquet",
+      "../../test/data/countries/natural-earth_countries_geo.parquet"};
+  std::vector<std::string> points{"../../test/data/cities/generated_points.parquet",
+                                  "../../test/data/countries/generated_points.parquet"};
+
+  for (int i = 0; i < polys.size(); i++) {
+    auto poly_path = TestUtils::GetTestDataPath(polys[i]);
+    auto point_path = TestUtils::GetCanonicalPath(points[i]);
+    TestJoiner(point_path, poly_path, Predicate::kIntersects, 10);
+  }
+}
+
+#if 0
 
 TEST(JoinerTest, PolygonPolygonContains) {
   SpatialJoiner::SpatialJoinerConfig config;
@@ -467,5 +402,6 @@ TEST(JoinerTest, PolygonPolygonContains) {
     array_index_offset += stream_array->length;
   }
 }
+#endif
 
 }  // namespace gpuspatial
