@@ -60,7 +60,6 @@ if(GPUSPATIAL_BUILD_TESTS)
   set(NANOARROW_IPC ON)
   set(NANOARROW_IPC_WITH_ZSTD ON)
 
-  #  include(cmake/thirdparty/get_zstd.cmake)
   # These wil be installed with vcpkg.json under "test" folder
   find_package(GTest CONFIG REQUIRED)
   find_package(GEOS CONFIG REQUIRED)
