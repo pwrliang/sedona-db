@@ -1,53 +1,34 @@
-
-/**********************************************************************
- *
- * GEOS - Geometry Engine Open Source
- * http://geos.osgeo.org
- *
- * Copyright (C) 2006 Refractions Research Inc.
- *
- * This is free software; you can redistribute and/or modify it under
- * the terms of the GNU Lesser General Public Licence as published
- * by the Free Software Foundation.
- * See the COPYING file for more information.
- *
- */
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #pragma once
-#include "gpuspatial/geom/orientation.cuh"
 #include "gpuspatial/geom/point.cuh"
 #include "gpuspatial/utils/cuda_utils.h"
+#include "gpuspatial/utils/doubledouble.h"
 
 namespace gpuspatial {
 
-/** \brief
- * Counts the number of segments crossed by a horizontal ray extending to the
- * right from a given point, in an incremental fashion.
- *
- * This can be used to determine whether a point lies in a polygonal geometry.
- * The class determines the situation where the point lies exactly on a segment.
- * When being used for Point-In-Polygon determination, this case allows
- * short-circuiting the evaluation.
- *
- * This class handles polygonal geometries with any number of shells and holes.
- * The orientation of the shell and hole rings is unimportant.
- * In order to compute a correct location for a given polygonal geometry,
- * it is essential that **all** segments are counted which
- *
- * - touch the ray
- * - lie in in any ring which may contain the point
- *
- * The only exception is when the point-on-segment situation is detected, in
- * which case no further processing is required.
- * The implication of the above rule is that segments which can be a priori
- * determined to *not* touch the ray (i.e. by a test of their bounding box or
- * Y-extent) do not need to be counted. This allows for optimization by indexing.
- *
- * @author Martin Davis
+/**
+ * The RayCrossingCounter simulates a ray casting from a point toward the positive y-axis
+ * and counts the number of intersections. The intersection status are stored with two
+ * uint32_t numbers, so that RayCrossingCounter can be packed/unpacked to be used in OptiX
  */
-
 class RayCrossingCounter {
+  enum { RIGHT = -1, LEFT = 1, STRAIGHT = 0, FAILURE = 2 };
   uint32_t crossing_count_;
-
   // true if the test point lies on an input segment
   uint32_t point_on_segment_;
 
@@ -67,98 +48,126 @@ class RayCrossingCounter {
 
   /** \brief
    * Counts a segment
-   *@param point test point
+   * @param point test point
    * @param p1 an endpoint of the segment
    * @param p2 another endpoint of the segment
    */
   template <typename POINT_T>
   DEV_HOST_INLINE void countSegment(const POINT_T& point, const POINT_T& p1,
                                     const POINT_T& p2) {
-    {
-      // For each segment, check if it crosses
-      // a horizontal ray running from the test point in
-      // the positive x direction.
+    auto max_x = fmax(p1.x(), p2.x());
+    if (max_x < point.x()) {
+      return;
+    }
+    int current_crossing_count = 0;
+    int is_on_segment = 0;
 
-      // check if the segment is strictly to the left of the test point
-      if (p1.x() < point.x() && p2.x() < point.x()) {
-        return;
-      }
+    is_on_segment = point.x() == p2.x() && point.y() == p2.y();
+    const bool is_horizontal_on_ray = p1.y() == point.y() && p2.y() == point.y();
 
-      // check if the point is equal to the current ring vertex
-      if (point.x() == p2.x() && point.y() == p2.y()) {
-        point_on_segment_ = 1;
-        return;
-      }
+    if (is_horizontal_on_ray) {
+      auto minx = fmin(p1.x(), p2.x());
+      const int is_on_horizontal = point.x() >= minx && point.x() <= max_x;
 
-      // For horizontal segments, check if the point is on the segment.
-      // Otherwise, horizontal segments are not counted.
-      if (p1.y() == point.y() && p2.y() == point.y()) {
-        double minx = p1.x();
-        double maxx = p2.x();
+      is_on_segment = is_on_segment || is_on_horizontal;
+    }
 
-        if (minx > maxx) {
-          minx = p2.x();
-          maxx = p1.x();
-        }
+    if (!is_horizontal_on_ray) {
+      const bool crosses_ray_y = (p1.y() > point.y() && p2.y() <= point.y()) ||
+                                 (p2.y() > point.y() && p1.y() <= point.y());
 
-        if (point.x() >= minx && point.x() <= maxx) {
-          point_on_segment_ = 1;
-        }
+      if (crosses_ray_y) {
+        int sign = orientation(p1, p2, point);
 
-        return;
-      }
+        is_on_segment = is_on_segment || sign == 0;
 
-      // Evaluate all non-horizontal segments which cross a horizontal ray
-      // to the right of the test pt.
-      // To avoid double-counting shared vertices, we use the convention that
-      // - an upward edge includes its starting endpoint, and excludes its
-      //   final endpoint
-      // - a downward edge excludes its starting endpoint, and includes its
-      //   final endpoint
-      if (((p1.y() > point.y()) && (p2.y() <= point.y())) ||
-          ((p2.y() > point.y()) && (p1.y() <= point.y()))) {
-        // For an upward edge, orientationIndex will be positive when p1->p2
-        // crosses ray. Conversely, downward edges should have negative sign.
-        int sign = Orientation<POINT_T>::orientationIndex(p1, p2, point);
-        if (sign == 0) {
-          point_on_segment_ = 1;
-          return;
-        }
-
-        if (p2.y() < p1.y()) {
-          sign = -sign;
-        }
-
-        // The segment crosses the ray if the sign is strictly positive.
-        if (sign > 0) {
-          crossing_count_++;
+        if (sign != 0) {
+          sign = p2.y() < p1.y() ? -sign : sign;
+          current_crossing_count = sign > 0;
         }
       }
     }
+    if (is_on_segment) {
+      point_on_segment_ = 1;
+    }
+
+    if (point_on_segment_ == 0) {
+      crossing_count_ += current_crossing_count;
+    }
   }
 
-  /** \brief
-   * Gets the [Location](@ref geom::Location) of the point relative to
-   * the ring, polygon or multipolygon from which the processed
-   * segments were provided.
-   *
-   * This method only determines the correct location
-   * if **all** relevant segments must have been processed.
-   *
-   * @return the Location of the point
-   */
   DEV_HOST_INLINE PointLocation location() const {
     if (point_on_segment_ == 1) {
       return PointLocation::kBoundary;
     }
 
-    // The point is in the interior of the ring if the number
-    // of X-crossings is odd.
-    if ((crossing_count_ % 2) == 1) {
-      return PointLocation::kInside;
+    return (crossing_count_ % 2) == 1 ? PointLocation::kInside : PointLocation::kOutside;
+  }
+
+ private:
+  DEV_HOST_INLINE static int orientation(double x) {
+    return (x < 0.0) ? RIGHT : ((x > 0.0) ? LEFT : STRAIGHT);
+  }
+
+  DEV_HOST_INLINE static int orientation(const DoubleDouble& x) {
+    DoubleDouble const zero(0.0);
+    return (x < zero) ? RIGHT : ((x > zero) ? LEFT : STRAIGHT);
+  }
+
+  template <typename POINT_T>
+  DEV_HOST_INLINE static int orientation(const POINT_T& p1, const POINT_T& p2,
+                                         const POINT_T& q) {
+    using scalar_t = typename POINT_T::scalar_t;
+    auto det_left = (p1.x() - q.x()) * (p2.y() - q.y());
+    auto det_right = (p1.y() - q.y()) * (p2.x() - q.x());
+    auto det = det_left - det_right;
+    scalar_t zero = 0.0;
+    // This is a rewrite of GEOS's orientation algorithm for the GPU to reduce branches
+
+    // Check for the "safe" orientation cases first.
+    // The quick exit conditions are when det_left and det_right have opposite signs,
+    // or when one of them is zero (including det_left = 0).
+
+    // Condition for safe return: sign(det_left) != sign(det_right) OR det_left == 0.
+    // (det_left > 0 and det_right <= 0) OR (det_left < 0 and det_right >= 0) OR (det_left
+    // == 0)
+
+    // Combine the two opposite-sign conditions:
+    // (det_left * det_right) <= zero covers all cases where signs are opposite or one is
+    // zero.
+    if (det_left * det_right <= zero) {
+      return orientation(det);
     }
 
-    return PointLocation::kOutside;
+    // If we reach here, it means det_left and det_right have the same sign (and are
+    // non-zero).
+    assert(det_left * det_right > 0);
+    // We must calculate det_sum: det_sum = |det_left| + |det_right|
+
+    // Since they have the same sign (or are both zero), this is always true:
+    // |det_left| + |det_right| == |det_left + det_right| OR -|det_left + det_right|
+    // A safer way is to use the absolute value function:
+    auto det_sum = fabs(det_left) + fabs(det_right);
+
+    // OR, since they have the same sign, we can use:
+    // det_sum = fabs(det_left + det_right); // This is mathematically equivalent
+    // OR, even simpler given the C++ context:
+    // det_sum = (det_left > 0) ? (det_left + det_right) : (-det_left - det_right);
+
+    double constexpr DP_SAFE_EPSILON = 1e-15;
+    double const err_bound = DP_SAFE_EPSILON * det_sum;
+    if (det >= err_bound || -det >= err_bound) {
+      return orientation(det);
+    }
+    // Cannot determine with double, using double double then
+    DoubleDouble dx1 = DoubleDouble(p2.x()) - DoubleDouble(p1.x());
+    DoubleDouble dy1 = DoubleDouble(p2.y()) - DoubleDouble(p1.y());
+    DoubleDouble dx2 = DoubleDouble(q.x()) - DoubleDouble(p2.x());
+    DoubleDouble dy2 = DoubleDouble(q.y()) - DoubleDouble(p2.y());
+
+    // cross product
+    DoubleDouble d = DoubleDouble(dx1 * dy2) - DoubleDouble(dy1 * dx2);
+    return orientation(d);
   }
 };
 

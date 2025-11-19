@@ -18,7 +18,6 @@
 
 #include "gpuspatial/geom/box.cuh"
 #include "gpuspatial/geom/line_string.cuh"
-#include "gpuspatial/geom/orientation.cuh"
 #include "gpuspatial/utils/array_view.h"
 #include "gpuspatial/utils/cuda_utils.h"
 #include "gpuspatial/utils/floating_point.h"
@@ -63,20 +62,6 @@ class LinearRing {
       return false;
     }
     return vertices_.size() >= 3;
-  }
-
-  /**
-    * Calculates the orientation of a ring (list of vertices) using the
-    * Summation of Cross Products (Signed Area).
-
-    * A positive result indicates Counter-Clockwise (CCW).
-    * A negative result indicates Clockwise (CW).
-    * A result near zero indicates a self-intersecting or degenerate polygon.
-    Formula: Sum( (x_i+1 - x_i) * (y_i+1 + y_i) )
-   * @return
-   */
-  DEV_HOST_INLINE bool IsCounterClockwise() const {
-    return Orientation<point_t>::IsCounterClockwise(vertices_);
   }
 
   DEV_HOST_INLINE PointLocation locate_point(const point_t& p) const {
