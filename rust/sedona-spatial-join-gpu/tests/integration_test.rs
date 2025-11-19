@@ -118,6 +118,7 @@ impl RecordBatchStream for MockStream {
     }
 }
 
+#[cfg(feature = "gpu")]
 #[tokio::test]
 async fn test_gpu_join_exec_creation() {
     // Create simple mock execution plans as children
@@ -151,6 +152,7 @@ async fn test_gpu_join_exec_creation() {
     assert_eq!(gpu_join.children().len(), 2);
 }
 
+#[cfg(feature = "gpu")]
 #[tokio::test]
 async fn test_gpu_join_exec_display() {
     let left_plan = Arc::new(MockExec::new()) as Arc<dyn ExecutionPlan>;
@@ -181,6 +183,7 @@ async fn test_gpu_join_exec_display() {
     assert!(display_str.contains("Inner"));
 }
 
+#[cfg(feature = "gpu")]
 #[tokio::test]
 async fn test_gpu_join_execution_with_fallback() {
     // This test should handle GPU not being available and fallback to CPU error
@@ -250,6 +253,7 @@ async fn test_gpu_join_execution_with_fallback() {
     );
 }
 
+#[cfg(feature = "gpu")]
 #[tokio::test]
 async fn test_gpu_join_with_empty_input() {
     // Test with empty batches (MockExec returns empty stream)

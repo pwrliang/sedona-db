@@ -253,8 +253,6 @@ impl GpuSpatialJoinStream {
                     // Execute GPU join with build data
                     match self.execute_gpu_join_with_build_data(&build_data) {
                         Ok(()) => {
-                            let total_result_rows: usize =
-                                self.result_batches.iter().map(|b| b.num_rows()).sum();
                             log::info!(
                                 "GPU join completed, produced {} result batches",
                                 self.result_batches.len()
@@ -342,7 +340,6 @@ impl GpuSpatialJoinStream {
 
         // Concatenate all right batches into one batch
         let _concat_timer = self.join_metrics.concat_time.timer();
-        let concat_start = Instant::now();
         let right_batch = if self.right_batches.len() == 1 {
             self.right_batches[0].clone()
         } else {
