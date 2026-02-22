@@ -19,7 +19,7 @@ pub(crate) mod build_side_collector;
 pub(crate) mod default_spatial_index;
 pub(crate) mod default_spatial_index_builder;
 pub(crate) mod gpu_spatial_index;
-mod gpu_spatial_index_builder;
+pub(crate) mod gpu_spatial_index_builder;
 mod knn_adapter;
 pub(crate) mod memory_plan;
 pub(crate) mod partitioned_index_provider;
@@ -32,6 +32,7 @@ pub(crate) use build_side_collector::{
 pub(crate) use spatial_index::SpatialIndex;
 
 pub use default_spatial_index_builder::DefaultSpatialIndexBuilder;
+pub use gpu_spatial_index_builder::GPUSpatialIndexBuilder;
 use wkb::reader::Wkb;
 
 /// The result of a spatial index query

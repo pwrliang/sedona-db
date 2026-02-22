@@ -302,3 +302,190 @@ impl SpatialIndex for GPUSpatialIndex {
         ))
     }
 }
+
+#[cfg(test)]
+#[cfg(feature = "gpu")]
+mod tests {
+    use crate::evaluated_batch::EvaluatedBatch;
+    use crate::index::spatial_index::SpatialIndexRef;
+    use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
+    use crate::index::{DefaultSpatialIndexBuilder, GPUSpatialIndexBuilder};
+    use crate::operand_evaluator::EvaluatedGeometryArray;
+    use crate::spatial_predicate::{RelationPredicate, SpatialRelationType};
+    use crate::SpatialPredicate;
+    use arrow_array::RecordBatch;
+    use arrow_schema::{DataType, Field};
+    use datafusion_common::JoinType;
+    use datafusion_physical_expr::expressions::Column;
+    use sedona_common::{ExecutionMode, SpatialJoinOptions};
+    use sedona_schema::datatypes::WKB_GEOMETRY;
+    use sedona_testing::create::create_array;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_spatial_index_builder_empty() {
+        let options = SpatialJoinOptions {
+            execution_mode: ExecutionMode::PrepareBuild,
+            ..Default::default()
+        };
+        let metrics = SpatialJoinBuildMetrics::default();
+        let schema = Arc::new(arrow_schema::Schema::empty());
+        let spatial_predicate = SpatialPredicate::Relation(RelationPredicate::new(
+            Arc::new(Column::new("geom", 0)),
+            Arc::new(Column::new("geom", 1)),
+            SpatialRelationType::Intersects,
+        ));
+
+        let builder = GPUSpatialIndexBuilder::new(
+            schema.clone(),
+            spatial_predicate,
+            options,
+            JoinType::Inner,
+            4,
+            metrics,
+        );
+
+        // Test finishing with empty data
+        let index = builder.finish().unwrap();
+        assert_eq!(index.schema(), schema);
+        assert_eq!(index.num_indexed_batches(), 0);
+    }
+
+    #[test]
+    fn test_spatial_index_builder_add_batch() {
+        let options = SpatialJoinOptions {
+            ..Default::default()
+        };
+        let metrics = SpatialJoinBuildMetrics::default();
+
+        let spatial_predicate = SpatialPredicate::Relation(RelationPredicate::new(
+            Arc::new(Column::new("geom", 0)),
+            Arc::new(Column::new("geom", 1)),
+            SpatialRelationType::Intersects,
+        ));
+
+        // Create a simple test geometry batch
+        let schema = Arc::new(arrow_schema::Schema::new(vec![Field::new(
+            "geom",
+            DataType::Binary,
+            true,
+        )]));
+
+        let mut builder = GPUSpatialIndexBuilder::new(
+            schema.clone(),
+            spatial_predicate,
+            options,
+            JoinType::Inner,
+            4,
+            metrics,
+        );
+
+        let batch = RecordBatch::new_empty(schema.clone());
+        let geom_batch = create_array(
+            &[
+                Some("POINT (0.25 0.25)"),
+                Some("POINT (10 10)"),
+                None,
+                Some("POINT (0.25 0.25)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+        let indexed_batch = EvaluatedBatch {
+            batch,
+            geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
+        };
+        builder.add_batch(indexed_batch).unwrap();
+
+        let index = builder.finish().unwrap();
+        assert_eq!(index.schema(), schema);
+        assert_eq!(index.num_indexed_batches(), 1);
+    }
+
+    async fn setup_index_for_batch_test(
+        build_geoms: &[Option<&str>],
+        options: SpatialJoinOptions,
+    ) -> SpatialIndexRef {
+        let metrics = SpatialJoinBuildMetrics::default();
+        let spatial_predicate = SpatialPredicate::Relation(RelationPredicate::new(
+            Arc::new(Column::new("left", 0)),
+            Arc::new(Column::new("right", 0)),
+            SpatialRelationType::Intersects,
+        ));
+        let schema = Arc::new(arrow_schema::Schema::new(vec![Field::new(
+            "geom",
+            DataType::Binary,
+            true,
+        )]));
+
+        let mut builder = GPUSpatialIndexBuilder::new(
+            schema,
+            spatial_predicate,
+            options,
+            JoinType::Inner,
+            1,
+            metrics,
+        );
+
+        let geom_array = create_array(build_geoms, &WKB_GEOMETRY);
+        let batch = RecordBatch::try_new(
+            Arc::new(arrow_schema::Schema::new(vec![Field::new(
+                "geom",
+                DataType::Binary,
+                true,
+            )])),
+            vec![Arc::new(geom_array.clone())],
+        )
+        .unwrap();
+        let evaluated_batch = EvaluatedBatch {
+            batch,
+            geom_array: EvaluatedGeometryArray::try_new(geom_array, &WKB_GEOMETRY).unwrap(),
+        };
+
+        builder.add_batch(evaluated_batch).unwrap();
+        builder.finish().unwrap()
+    }
+
+    fn create_probe_batch(probe_geoms: &[Option<&str>]) -> Arc<EvaluatedBatch> {
+        let geom_array = create_array(probe_geoms, &WKB_GEOMETRY);
+        let batch = RecordBatch::try_new(
+            Arc::new(arrow_schema::Schema::new(vec![Field::new(
+                "geom",
+                DataType::Binary,
+                true,
+            )])),
+            vec![Arc::new(geom_array.clone())],
+        )
+        .unwrap();
+        Arc::new(EvaluatedBatch {
+            batch,
+            geom_array: EvaluatedGeometryArray::try_new(geom_array, &WKB_GEOMETRY).unwrap(),
+        })
+    }
+    #[tokio::test]
+    async fn test_query_batch_empty_results() {
+        let build_geoms = &[Some("POINT (0 0)"), Some("POINT (1 1)")];
+        let index = setup_index_for_batch_test(build_geoms, SpatialJoinOptions::default()).await;
+
+        // Probe with geometries that don't intersect
+        let probe_geoms = &[Some("POINT (10 10)"), Some("POINT (20 20)")];
+        let probe_batch = create_probe_batch(probe_geoms);
+
+        let mut build_batch_positions = Vec::new();
+        let mut probe_indices = Vec::new();
+        let (metrics, next_idx) = index
+            .query_batch(
+                &probe_batch,
+                0..2,
+                usize::MAX,
+                &mut build_batch_positions,
+                &mut probe_indices,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(metrics.count, 0);
+        assert_eq!(build_batch_positions.len(), 0);
+        assert_eq!(probe_indices.len(), 0);
+        assert_eq!(next_idx, 2);
+    }
+}
