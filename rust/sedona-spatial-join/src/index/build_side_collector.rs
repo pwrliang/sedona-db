@@ -32,6 +32,7 @@ use sedona_expr::statistics::GeoStatistics;
 use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
 use sedona_schema::datatypes::WKB_GEOMETRY;
 
+use crate::index::gpu_spatial_index_builder::GPUSpatialIndexBuilder;
 use crate::index::spatial_index_builder::SpatialIndexBuilder;
 use crate::index::DefaultSpatialIndexBuilder;
 use crate::{
@@ -218,11 +219,24 @@ impl BuildSideBatchesCollector {
         }
 
         let geo_statistics = analyzer.finish();
-        let extra_mem = DefaultSpatialIndexBuilder::estimate_extra_memory_usage(
-            &geo_statistics,
+        let extra_mem: usize;
+
+        if GPUSpatialIndexBuilder::is_using_gpu(
             &self.spatial_predicate,
             &self.spatial_join_options,
-        );
+        )? {
+            extra_mem = GPUSpatialIndexBuilder::estimate_extra_memory_usage(
+                &geo_statistics,
+                &self.spatial_predicate,
+                &self.spatial_join_options,
+            );
+        } else {
+            extra_mem = DefaultSpatialIndexBuilder::estimate_extra_memory_usage(
+                &geo_statistics,
+                &self.spatial_predicate,
+                &self.spatial_join_options,
+            );
+        }
 
         // Try to grow the reservation a bit more to account for any underestimation of
         // memory usage. We proceed even when the growth fails.

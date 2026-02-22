@@ -293,7 +293,8 @@ struct GpuSpatialRefinerExporter {
     auto refiner = gpuspatial::CreateRTSpatialRefiner(refiner_config);
 
     out->clear = &CClear;
-    out->init_schema = &CInitSchema;
+    out->init_build_schema = &CInitBuildSchema;
+    out->init_probe_schema = &CInitProbeSchema;
     out->push_build = &CPushBuild;
     out->finish_building = &CFinishBuilding;
     out->refine = &CRefine;
@@ -310,8 +311,8 @@ struct GpuSpatialRefinerExporter {
                        [&] { use_refiner(self).Clear(); });
   }
 
-  static int CInitSchema(SedonaSpatialRefiner* self, const ArrowSchema* build_schema,
-                         const ArrowSchema* probe_schema) {
+  static int CInitBuildSchema(SedonaSpatialRefiner* self,
+                              const ArrowSchema* build_schema) {
     return SafeExecute(static_cast<private_data_t*>(self->private_data), [&] {
       auto* private_data = static_cast<private_data_t*>(self->private_data);
       ArrowError arrow_error;
@@ -320,6 +321,14 @@ struct GpuSpatialRefinerExporter {
         throw std::runtime_error("ArrowArrayViewInitFromSchema error " +
                                  std::string(arrow_error.message));
       }
+    });
+  }
+
+  static int CInitProbeSchema(SedonaSpatialRefiner* self,
+                              const ArrowSchema* probe_schema) {
+    return SafeExecute(static_cast<private_data_t*>(self->private_data), [&] {
+      auto* private_data = static_cast<private_data_t*>(self->private_data);
+      ArrowError arrow_error;
       if (ArrowArrayViewInitFromSchema(private_data->payload.probe_array_view.get(),
                                        probe_schema, &arrow_error) != NANOARROW_OK) {
         throw std::runtime_error("ArrowArrayViewInitFromSchema error " +

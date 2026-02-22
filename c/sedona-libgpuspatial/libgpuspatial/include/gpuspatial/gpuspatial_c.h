@@ -155,9 +155,11 @@ struct SedonaSpatialRefiner {
   /** Clear all built geometries from the refiner */
   int (*clear)(struct SedonaSpatialRefiner* self);
 
-  int (*init_schema)(struct SedonaSpatialRefiner* self,
-                     const struct ArrowSchema* build_schema,
-                     const struct ArrowSchema* probe_schema);
+  int (*init_build_schema)(struct SedonaSpatialRefiner* self,
+                           const struct ArrowSchema* build_schema);
+
+  int (*init_probe_schema)(struct SedonaSpatialRefiner* self,
+                           const struct ArrowSchema* probe_schema);
 
   /** Push geometries for building the spatial refiner
    *

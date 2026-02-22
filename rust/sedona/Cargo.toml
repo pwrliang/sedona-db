@@ -43,6 +43,7 @@ pointcloud = ["dep:sedona-pointcloud"]
 proj = ["sedona-proj/proj-sys"]
 spatial-join = ["dep:sedona-spatial-join"]
 s2geography = ["dep:sedona-s2geography"]
+gpu = ["sedona-spatial-join/gpu"]
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -83,6 +84,7 @@ sedona-spatial-join = { workspace = true, optional = true }
 sedona-s2geography = { workspace = true, optional = true }
 sedona-testing = { workspace = true }
 sedona-tg = { workspace = true, optional = true }
+sedona-libgpuspatial = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

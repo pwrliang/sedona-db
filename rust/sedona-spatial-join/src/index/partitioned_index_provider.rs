@@ -15,7 +15,19 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::evaluated_batch::evaluated_batch_stream::external::ExternalEvaluatedBatchStream;
+use crate::evaluated_batch::evaluated_batch_stream::SendableEvaluatedBatchStream;
+use crate::evaluated_batch::EvaluatedBatch;
+use crate::index::gpu_spatial_index_builder::GPUSpatialIndexBuilder;
+use crate::index::spatial_index::SpatialIndexRef;
+use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
+use crate::index::{BuildPartition, DefaultSpatialIndexBuilder};
+use crate::partitioning::stream_repartitioner::{SpilledPartition, SpilledPartitions};
+use crate::spatial_predicate::SpatialRelationType;
+use crate::utils::disposable_async_cell::DisposableAsyncCell;
+use crate::{partitioning::SpatialPartition, spatial_predicate::SpatialPredicate};
 use arrow_schema::SchemaRef;
+use async_trait::async_trait;
 use datafusion_common::{DataFusionError, Result, SharedResult};
 use datafusion_common_runtime::JoinSet;
 use datafusion_execution::memory_pool::MemoryReservation;
@@ -23,17 +35,10 @@ use datafusion_expr::JoinType;
 use futures::StreamExt;
 use parking_lot::Mutex;
 use sedona_common::{sedona_internal_err, SpatialJoinOptions};
+use sedona_expr::statistics::GeoStatistics;
 use std::ops::DerefMut;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-
-use crate::evaluated_batch::evaluated_batch_stream::external::ExternalEvaluatedBatchStream;
-use crate::index::spatial_index::SpatialIndexRef;
-use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
-use crate::index::{BuildPartition, DefaultSpatialIndexBuilder};
-use crate::partitioning::stream_repartitioner::{SpilledPartition, SpilledPartitions};
-use crate::utils::disposable_async_cell::DisposableAsyncCell;
-use crate::{partitioning::SpatialPartition, spatial_predicate::SpatialPredicate};
 
 pub(crate) struct PartitionedIndexProvider {
     schema: SchemaRef,
@@ -57,6 +62,58 @@ pub(crate) struct PartitionedIndexProvider {
 pub(crate) enum BuildSideData {
     SinglePartition(Mutex<Option<Vec<BuildPartition>>>),
     MultiPartition(Mutex<SpilledPartitions>),
+}
+
+pub(crate) enum SpatialIndexBuilderWrapper {
+    Gpu(GPUSpatialIndexBuilder),
+    Default(DefaultSpatialIndexBuilder),
+}
+#[async_trait]
+impl SpatialIndexBuilder for SpatialIndexBuilderWrapper {
+    async fn add_stream(
+        &mut self,
+        stream: SendableEvaluatedBatchStream,
+        geo_statistics: GeoStatistics,
+    ) -> Result<()> {
+        match self {
+            Self::Gpu(b) => b.add_stream(stream, geo_statistics).await,
+            Self::Default(b) => b.add_stream(stream, geo_statistics).await,
+        }
+    }
+
+    fn add_batch(&mut self, indexed_batch: EvaluatedBatch) -> Result<()> {
+        match self {
+            Self::Gpu(b) => b.add_batch(indexed_batch),
+            Self::Default(b) => b.add_batch(indexed_batch),
+        }
+    }
+
+    fn merge_stats(&mut self, stats: GeoStatistics) -> &mut Self {
+        match self {
+            Self::Gpu(b) => {
+                b.merge_stats(stats);
+            }
+            Self::Default(b) => {
+                b.merge_stats(stats);
+            }
+        }
+        self
+    }
+
+    fn finish(self) -> Result<SpatialIndexRef> {
+        match self {
+            Self::Gpu(b) => b.finish(),
+            Self::Default(b) => b.finish(),
+        }
+    }
+
+    fn estimate_extra_memory_usage(
+        geo_stats: &GeoStatistics,
+        spatial_predicate: &SpatialPredicate,
+        options: &SpatialJoinOptions,
+    ) -> usize {
+        todo!()
+    }
 }
 
 impl PartitionedIndexProvider {
@@ -267,14 +324,7 @@ impl PartitionedIndexProvider {
         &self,
         build_partitions: Vec<BuildPartition>,
     ) -> Result<SpatialIndexRef> {
-        let mut index_builder = DefaultSpatialIndexBuilder::new(
-            Arc::clone(&self.schema),
-            self.spatial_predicate.clone(),
-            self.options.clone(),
-            self.join_type,
-            self.probe_threads_count,
-            self.metrics.clone(),
-        )?;
+        let mut index_builder = self.create_index_builder()?;
 
         for build_partition in build_partitions {
             let stream = build_partition.build_side_batch_stream;
@@ -289,15 +339,7 @@ impl PartitionedIndexProvider {
         &self,
         spilled_partition: SpilledPartition,
     ) -> Result<SpatialIndexRef> {
-        let mut index_builder = DefaultSpatialIndexBuilder::new(
-            Arc::clone(&self.schema),
-            self.spatial_predicate.clone(),
-            self.options.clone(),
-            self.join_type,
-            self.probe_threads_count,
-            self.metrics.clone(),
-        )?;
-
+        let mut index_builder = self.create_index_builder()?;
         // Spawn tasks to load indexed batches from spilled files concurrently
         let (spill_files, geo_statistics, _) = spilled_partition.into_inner();
         let mut join_set: JoinSet<Result<(), DataFusionError>> = JoinSet::new();
@@ -343,6 +385,30 @@ impl PartitionedIndexProvider {
         index_builder.merge_stats(geo_statistics);
 
         index_builder.finish()
+    }
+
+    fn create_index_builder(&self) -> Result<SpatialIndexBuilderWrapper> {
+        if GPUSpatialIndexBuilder::is_using_gpu(&self.spatial_predicate, &self.options)? {
+            let builder = GPUSpatialIndexBuilder::new(
+                Arc::clone(&self.schema),
+                self.spatial_predicate.clone(),
+                self.options.clone(),
+                self.join_type,
+                self.probe_threads_count,
+                self.metrics.clone(),
+            );
+            Ok(SpatialIndexBuilderWrapper::Gpu(builder))
+        } else {
+            let builder = DefaultSpatialIndexBuilder::new(
+                Arc::clone(&self.schema),
+                self.spatial_predicate.clone(),
+                self.options.clone(),
+                self.join_type,
+                self.probe_threads_count,
+                self.metrics.clone(),
+            )?;
+            Ok(SpatialIndexBuilderWrapper::Default(builder))
+        }
     }
 }
 

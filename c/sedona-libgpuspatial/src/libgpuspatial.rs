@@ -346,7 +346,8 @@ impl Refiner {
     ) -> Result<Self, GpuSpatialError> {
         let mut refiner = SedonaSpatialRefiner {
             clear: None,
-            init_schema: None,
+            init_build_schema: None,
+            init_probe_schema: None,
             push_build: None,
             finish_building: None,
             refine: None,
@@ -377,26 +378,42 @@ impl Refiner {
     /// Initializes the schema for the refiner using the provided build and probe data types.
     /// It converts the Arrow `DataType` to the C-compatible `FFI_ArrowSchema` and calls the underlying C function.
     /// If initialization fails, it retrieves the error message from the C struct and returns a `GpuSpatialError`.
-    pub fn init_schema(
-        &mut self,
-        build_dt: &DataType,
-        probe_dt: &DataType,
-    ) -> Result<(), GpuSpatialError> {
+    pub fn init_build_schema(&mut self, build_dt: &DataType) -> Result<(), GpuSpatialError> {
         let build_ffi = FFI_ArrowSchema::try_from(build_dt)?;
-        let probe_ffi = FFI_ArrowSchema::try_from(probe_dt)?;
-        let init_fn = self.inner.refiner.init_schema.unwrap();
+        let init_fn = self
+            .inner
+            .refiner
+            .init_build_schema
+            .expect("init_build_schema function is None");
         let get_last_error = self.inner.refiner.get_last_error;
         let refiner_ptr = &mut self.inner.refiner as *mut SedonaSpatialRefiner;
 
         unsafe {
             check_ffi_call(
-                || {
-                    init_fn(
-                        &mut self.inner.refiner,
-                        &build_ffi as *const _ as *const _,
-                        &probe_ffi as *const _ as *const _,
-                    )
-                },
+                || init_fn(&mut self.inner.refiner, &build_ffi as *const _ as *const _),
+                get_last_error,
+                refiner_ptr,
+                GpuSpatialError::Init,
+            )
+        }
+    }
+
+    /// Initializes the schema for the refiner using the provided build and probe data types.
+    /// It converts the Arrow `DataType` to the C-compatible `FFI_ArrowSchema` and calls the underlying C function.
+    /// If initialization fails, it retrieves the error message from the C struct and returns a `GpuSpatialError`.
+    pub fn init_probe_schema(&mut self, probe_dt: &DataType) -> Result<(), GpuSpatialError> {
+        let probe_ffi = FFI_ArrowSchema::try_from(probe_dt)?;
+        let init_fn = self
+            .inner
+            .refiner
+            .init_probe_schema
+            .expect("init_probe_schema function is None");
+        let get_last_error = self.inner.refiner.get_last_error;
+        let refiner_ptr = &mut self.inner.refiner as *mut SedonaSpatialRefiner;
+
+        unsafe {
+            check_ffi_call(
+                || init_fn(&mut self.inner.refiner, &probe_ffi as *const _ as *const _),
                 get_last_error,
                 refiner_ptr,
                 GpuSpatialError::Init,
