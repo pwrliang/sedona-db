@@ -47,10 +47,10 @@ void ReorderIndices(rmm::cuda_stream_view stream, INDEX_IT index_begin,
   auto sorted_begin = sorted_uniq_indices.begin();
   auto sorted_end = sorted_uniq_indices.end();
   thrust::transform(rmm::exec_policy_nosync(stream), index_begin, index_end,
-                    reordered_indices.begin(), [=] __device__(uint32_t val) {
+                    reordered_indices.begin(), [=] __device__(uint32_t val) -> uint32_t {
                       auto it =
                           thrust::lower_bound(thrust::seq, sorted_begin, sorted_end, val);
-                      return thrust::distance(sorted_begin, it);
+                      return cuda::std::distance(sorted_begin, it);
                     });
 }
 
@@ -398,7 +398,7 @@ template <typename INDEX_IT>
 void RTSpatialRefiner::buildIndicesMap(rmm::cuda_stream_view stream, INDEX_IT index_begin,
                                        INDEX_IT index_end,
                                        IndicesMap& indices_map) const {
-  auto len = thrust::distance(index_begin, index_end);
+  auto len = cuda::std::distance(index_begin, index_end);
   auto& d_uniq_indices = indices_map.d_uniq_indices;
   auto& h_uniq_indices = indices_map.h_uniq_indices;
 
@@ -410,7 +410,7 @@ void RTSpatialRefiner::buildIndicesMap(rmm::cuda_stream_view stream, INDEX_IT in
                d_uniq_indices.end());
   auto uniq_end = thrust::unique(rmm::exec_policy_nosync(stream), d_uniq_indices.begin(),
                                  d_uniq_indices.end());
-  auto uniq_size = thrust::distance(d_uniq_indices.begin(), uniq_end);
+  auto uniq_size = cuda::std::distance(d_uniq_indices.begin(), uniq_end);
 
   d_uniq_indices.resize(uniq_size, stream);
   h_uniq_indices.resize(uniq_size);

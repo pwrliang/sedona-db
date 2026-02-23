@@ -60,8 +60,11 @@ inline long long get_free_physical_memory() {
 }  // namespace detail
 
 MemoryManager& MemoryManager::instance() {
-  static MemoryManager instance;
-  return instance;
+  // Use a heap allocation to bypass automatic static destruction.
+  // This prevents the destructor from running after RMM has already been torn down.
+  // This is an intentional memory leak.
+  static MemoryManager* instance = new MemoryManager();
+  return *instance;
 }
 
 MemoryManager::~MemoryManager() { Shutdown(); }

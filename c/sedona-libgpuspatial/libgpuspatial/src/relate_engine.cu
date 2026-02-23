@@ -25,8 +25,8 @@
 #include "gpuspatial/utils/logger.hpp"
 #include "rt/shaders/shader_id.hpp"
 
-#include <rmm/mr/device/pool_memory_resource.hpp>
-#include <rmm/mr/device/tracking_resource_adaptor.hpp>
+#include "rmm/mr/pool_memory_resource.hpp"
+#include "rmm/mr/tracking_resource_adaptor.hpp"
 #include "rmm/cuda_stream_view.hpp"
 #include "rmm/device_scalar.hpp"
 #include "rmm/exec_policy.hpp"

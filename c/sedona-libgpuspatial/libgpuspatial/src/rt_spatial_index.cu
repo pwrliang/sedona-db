@@ -42,7 +42,7 @@ static rmm::device_uvector<OptixAabb> ComputeAABBs(rmm::cuda_stream_view stream,
   rmm::device_uvector<OptixAabb> aabbs(mbrs.size(), stream);
 
   thrust::transform(rmm::exec_policy_nosync(stream), mbrs.begin(), mbrs.end(),
-                    aabbs.begin(), [] __device__(const Box<POINT_T>& mbr) {
+                    aabbs.begin(), [] __device__(const Box<POINT_T>& mbr) -> OptixAabb {
                       // handle empty boxes
                       if (mbr.get_min().empty() || mbr.get_max().empty()) {
                         // empty box
@@ -88,7 +88,7 @@ rmm::device_uvector<OptixAabb> ComputeAABBs(
   rmm::device_uvector<uint32_t> morton_codes(np, stream);
   // compute morton codes and reorder indices
   thrust::transform(rmm::exec_policy_nosync(stream), points.begin(), points.end(),
-                    morton_codes.begin(), [=] __device__(const POINT_T& p) {
+                    morton_codes.begin(), [=] __device__(const POINT_T& p) -> uint32_t {
                       POINT_T norm_p;
 
                       for (int dim = 0; dim < n_dim; dim++) {
@@ -297,21 +297,22 @@ template <typename SCALAR_T, int N_DIM>
 void RTSpatialIndex<SCALAR_T, N_DIM>::FinishBuilding() {
   auto stream = rmm::cuda_stream_default;
 
-  indexing_points_ = thrust::all_of(rmm::exec_policy_nosync(stream), rects_.begin(),
-                                    rects_.end(), [] __device__(const box_t& box) {
-                                      bool is_point = true;
-                                      for (int dim = 0; dim < n_dim; dim++) {
-                                        is_point &= box.get_min(dim) == box.get_max(dim);
-                                      }
-                                      return is_point;
-                                    });
+  indexing_points_ =
+      thrust::all_of(rmm::exec_policy_nosync(stream), rects_.begin(), rects_.end(),
+                     [] __device__(const box_t& box) -> bool {
+                       bool is_point = true;
+                       for (int dim = 0; dim < n_dim; dim++) {
+                         is_point &= box.get_min(dim) == box.get_max(dim);
+                       }
+                       return is_point;
+                     });
 
   rmm::device_uvector<OptixAabb> aabbs{0, stream};
   if (indexing_points_) {
     points_.resize(rects_.size(), stream);
-    thrust::transform(rmm::exec_policy_nosync(stream), rects_.begin(), rects_.end(),
-                      points_.begin(),
-                      [] __device__(const box_t& box) { return box.get_min(); });
+    thrust::transform(
+        rmm::exec_policy_nosync(stream), rects_.begin(), rects_.end(), points_.begin(),
+        [] __device__(const box_t& box) -> point_t { return box.get_min(); });
     aabbs = std::move(detail::ComputeAABBs(stream, points_, point_ranges_,
                                            reordered_point_indices_,
                                            config_.n_points_per_aabb, rects_));
@@ -346,20 +347,21 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::Probe(const box_t* rects, uint32_t n_rects
   CUDA_CHECK(cudaMemcpyAsync(d_rects.data(), rects, sizeof(box_t) * n_rects,
                              cudaMemcpyHostToDevice, stream));
 
-  bool probe_points = thrust::all_of(rmm::exec_policy_nosync(stream), d_rects.begin(),
-                                     d_rects.end(), [] __device__(const box_t& box) {
-                                       bool is_point = true;
-                                       for (int dim = 0; dim < n_dim; dim++) {
-                                         is_point &= box.get_min(dim) == box.get_max(dim);
-                                       }
-                                       return is_point;
-                                     });
+  bool probe_points =
+      thrust::all_of(rmm::exec_policy_nosync(stream), d_rects.begin(), d_rects.end(),
+                     [] __device__(const box_t& box) -> bool {
+                       bool is_point = true;
+                       for (int dim = 0; dim < n_dim; dim++) {
+                         is_point &= box.get_min(dim) == box.get_max(dim);
+                       }
+                       return is_point;
+                     });
 
   if (probe_points) {
     d_points.resize(d_rects.size(), stream);
-    thrust::transform(rmm::exec_policy_nosync(stream), d_rects.begin(), d_rects.end(),
-                      d_points.begin(),
-                      [] __device__(const box_t& box) { return box.get_min(); });
+    thrust::transform(
+        rmm::exec_policy_nosync(stream), d_rects.begin(), d_rects.end(), d_points.begin(),
+        [] __device__(const box_t& box) -> point_t { return box.get_min(); });
     d_rects.resize(0, stream);
     d_rects.shrink_to_fit(stream);
 
@@ -369,9 +371,9 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::Probe(const box_t* rects, uint32_t n_rects
     ctx.timer.start(stream);
 #endif
     rmm::device_uvector<OptixAabb> aabbs(n_rects, stream);
-    thrust::transform(rmm::exec_policy_nosync(stream), d_rects.begin(), d_rects.end(),
-                      aabbs.begin(),
-                      [] __device__(const box_t& mbr) { return mbr.ToOptixAabb(); });
+    thrust::transform(
+        rmm::exec_policy_nosync(stream), d_rects.begin(), d_rects.end(), aabbs.begin(),
+        [] __device__(const box_t& mbr) -> OptixAabb { return mbr.ToOptixAabb(); });
     ctx.handle = config_.rt_engine->BuildAccelCustom(
         stream, ArrayView<OptixAabb>(aabbs), ctx.bvh_buffer, config_.prefer_fast_build,
         config_.compact);
