@@ -29,7 +29,7 @@ use crate::{
 use arrow::array::BooleanBufferBuilder;
 use arrow::compute::concat;
 use arrow_array::RecordBatch;
-use arrow_schema::SchemaRef;
+use arrow_schema::{DataType, SchemaRef};
 use async_trait::async_trait;
 use datafusion_common::Result;
 use datafusion_common::{DataFusionError, JoinType};
@@ -56,6 +56,8 @@ pub struct GPUSpatialIndexBuilder {
     stats: GeoStatistics,
     /// Memory used by the spatial index
     memory_used: usize,
+    /// Data type of the probe geometry, used for correct schema initialization of GPU refiner
+    probe_datatype: DataType,
 }
 
 impl GPUSpatialIndexBuilder {
@@ -100,6 +102,7 @@ impl GPUSpatialIndexBuilder {
         join_type: JoinType,
         probe_threads_count: usize,
         metrics: SpatialJoinBuildMetrics,
+        probe_datatype: DataType,
     ) -> Self {
         Self {
             schema,
@@ -111,6 +114,7 @@ impl GPUSpatialIndexBuilder {
             indexed_batches: vec![],
             stats: GeoStatistics::empty(),
             memory_used: 0,
+            probe_datatype,
         }
     }
 
@@ -186,7 +190,7 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
         let gpu_options = GpuSpatialOptions {
             cuda_use_memory_pool: self.options.gpu.use_memory_pool,
             cuda_memory_pool_init_percent: self.options.gpu.memory_pool_init_percentage as i32,
-            concurrency: 1,
+            concurrency: self.probe_threads_count as u32,
             device_id: self.options.gpu.device_id as i32,
             compress_bvh: self.options.gpu.compress_bvh,
             pipeline_batches: self.options.gpu.pipeline_batches as u32,
@@ -250,9 +254,8 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
             .map_err(|e| {
                 DataFusionError::Execution(format!("Failed to init schema for refiner {e:?}"))
             })?;
-        // FIXME: We need to pass stream type to refiner for correct schema initialization.
         refiner
-            .init_probe_schema(sedona_type.storage_type())
+            .init_probe_schema(&self.probe_datatype)
             .map_err(|e| {
                 DataFusionError::Execution(format!("Failed to init schema for refiner {e:?}"))
             })?;
