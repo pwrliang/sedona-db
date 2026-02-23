@@ -17,7 +17,6 @@
 
 #include "gpuspatial/mem/memory_manager.hpp"
 #include "gpuspatial/utils/logger.hpp"
-
 #if defined(_WIN32)
 #include <windows.h>
 #elif defined(__linux__)
@@ -25,6 +24,9 @@
 #else  // POSIX (BSD, Solaris, etc.)
 #include <unistd.h>
 #endif
+
+#include <mutex>
+
 namespace gpuspatial {
 namespace detail {
 inline long long get_free_physical_memory() {
@@ -70,6 +72,7 @@ MemoryManager& MemoryManager::instance() {
 MemoryManager::~MemoryManager() { Shutdown(); }
 
 void MemoryManager::Shutdown() {
+  GPUSPATIAL_LOG_INFO("Shutdown MemoryManager and releasing all resources.");
   if (is_initialized_) {
     rmm::mr::set_current_device_resource(nullptr);
     active_resource_.reset();
@@ -81,12 +84,15 @@ void MemoryManager::Shutdown() {
 }
 
 void MemoryManager::Init(bool use_pool, int init_pool_precent) {
+  static std::mutex init_mtx;
+  std::lock_guard<std::mutex> lock(init_mtx);
+
   if (is_initialized_) {
     GPUSPATIAL_LOG_WARN(
         "MemoryManager is already initialized. Skipping re-initialization.");
     return;
   }
-
+  GPUSPATIAL_LOG_INFO("Init Memory Manager");
   cuda_mr_ = std::make_unique<CudaMR>();
   use_pool_ = use_pool;
 

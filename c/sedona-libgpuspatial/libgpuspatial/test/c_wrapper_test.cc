@@ -285,8 +285,6 @@ TEST_F(CWrapperTest, InitializeJoiner) {
     }
 
     refiner_.clear(&refiner_);
-    auto mr = rmm::mr::get_current_device_resource();
-    printf("current mr: %p", mr);
     ASSERT_EQ(refiner_.push_build(&refiner_, build_array.get()), 0);
     ASSERT_EQ(refiner_.finish_building(&refiner_), 0);
 
