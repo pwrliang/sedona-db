@@ -137,24 +137,6 @@ impl GPUSpatialIndexBuilder {
         Ok(Some(Mutex::new(bitmaps)))
     }
 
-    fn make_conservative_box(rect: Rect<f32>) -> Rect<f32> {
-        let mut new_min_x = rect.min().x;
-        let mut new_min_y = rect.min().y;
-        let mut new_max_x = rect.max().x;
-        let mut new_max_y = rect.max().y;
-
-        for _ in 0..2 {
-            new_min_x = new_min_x.next_after(f32::NEG_INFINITY);
-            new_min_y = new_min_y.next_after(f32::NEG_INFINITY);
-            new_max_x = new_max_x.next_after(f32::INFINITY);
-            new_max_y = new_max_y.next_after(f32::INFINITY);
-        }
-        Rect::new(
-            coord!(x: new_min_x, y: new_min_y),
-            coord!(x: new_max_x, y: new_max_y),
-        )
-    }
-
     fn record_memory_usage(&mut self, bytes: usize) {
         self.memory_used += bytes;
         self.metrics.build_mem_used.set_max(self.memory_used);
@@ -258,7 +240,7 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
 
             for (idx, rect_opt) in rects.iter().enumerate() {
                 if let Some(rect) = rect_opt {
-                    native_rects.push(Self::make_conservative_box(*rect));
+                    native_rects.push(*rect);
                 } else {
                     native_rects.push(empty_rect);
                 }
