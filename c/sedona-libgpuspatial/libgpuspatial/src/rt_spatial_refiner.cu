@@ -129,6 +129,7 @@ uint32_t RTSpatialRefiner::Refine(const ArrowArrayView* probe_array, Predicate p
 
   buildIndicesMap(ctx.cuda_stream, d_probe_indices.begin(), d_probe_indices.end(),
                   probe_indices_map);
+  ctx.cuda_stream.synchronize();  // Ensure h_uniq_indices is ready before parsing
 
   loader_t loader(thread_pool_);
   loader_t::Config loader_config;
@@ -280,6 +281,8 @@ uint32_t RTSpatialRefiner::RefinePipelined(const ArrowArrayView* probe_array,
 
     // 4. Parse WKB (CPU Heavy)
     slot->loader->Clear(slot->stream);
+    slot->stream.synchronize();  // Ensure h_uniq_indices is ready!
+
     slot->loader->Parse(slot->stream, probe_array,
                         slot->indices_map.h_uniq_indices.begin(),
                         slot->indices_map.h_uniq_indices.end());
@@ -288,13 +291,13 @@ uint32_t RTSpatialRefiner::RefinePipelined(const ArrowArrayView* probe_array,
     return slot->loader->Finish(slot->stream);
   };
 
+  main_stream.synchronize();  // Ensure allocation is done before main loop
+
   // --- PIPELINE PRIMING ---
   // Start processing Batch 0 immediately in background
   size_t first_batch_len = std::min(batch_size, (size_t)len);
   slots[0]->prep_future = std::async(std::launch::async, prepare_batch_task,
                                      slots[0].get(), 0, first_batch_len);
-
-  main_stream.synchronize();  // Ensure allocation is done before main loop
 
   // --- MAIN PIPELINE LOOP ---
   for (size_t offset = 0; offset < len; offset += batch_size) {
@@ -327,7 +330,7 @@ uint32_t RTSpatialRefiner::RefinePipelined(const ArrowArrayView* probe_array,
     curr_slot->d_batch_build_indices.resize(current_batch_len, curr_slot->stream);
     CUDA_CHECK(cudaMemcpyAsync(curr_slot->d_batch_build_indices.data(), batch_build_ptr,
                                sizeof(uint32_t) * current_batch_len,
-                               cudaMemcpyHostToDevice, curr_slot->stream));
+                               cudaMemcpyDeviceToDevice, curr_slot->stream));
 
     // Relate/Refine
     // Note: Evaluate filters d_batch_build_indices in-place

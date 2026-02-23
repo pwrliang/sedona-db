@@ -583,6 +583,12 @@ class ParallelWkbLoader {
     size_t num_offsets = std::distance(begin, end);
     if (num_offsets == 0) return;
 
+#ifndef NDEBUG
+    for (auto it = begin; it != end; ++it) {
+      assert(*it < array_view->length);
+    }
+#endif
+
     auto parallelism = thread_pool_->num_threads();
     uint64_t est_bytes = estimateTotalBytes(array_view, begin, end);
 
@@ -631,9 +637,10 @@ class ParallelWkbLoader {
           GeoArrowWKBReader reader;
           GeoArrowError error;
           GEOARROW_THROW_NOT_OK(&error, GeoArrowWKBReaderInit(&reader));
-
-          uint64_t chunk_bytes = estimateTotalBytes(array_view, begin + thread_work_start,
-                                                    begin + thread_work_end);
+          // fixme: chunk_start +
+          uint64_t chunk_bytes =
+              estimateTotalBytes(array_view, begin + chunk_start + thread_work_start,
+                                 begin + chunk_start + thread_work_end);
           local_geoms.vertices.reserve(chunk_bytes / sizeof(POINT_T));
 
           for (uint32_t work_offset = thread_work_start; work_offset < thread_work_end;
@@ -915,6 +922,13 @@ class ParallelWkbLoader {
     if (array_view->null_count == 0) {
       for (auto it = begin; it != end; ++it) {
         auto offset = *it;
+        if (offset >= array_view->length) {
+          auto str = "Offset " + std::to_string(offset) +
+                     " is out of bounds for ArrowArray of length " +
+                     std::to_string(array_view->length);
+          GPUSPATIAL_LOG_ERROR("Out of bounds access: %s", str.c_str());
+        }
+        assert(offset < array_view->length);
         auto item = ArrowArrayViewGetBytesUnsafe(array_view, offset);
         total_bytes += item.size_bytes;
       }
