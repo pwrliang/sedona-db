@@ -156,11 +156,6 @@ mod sys {
             self.inner.init_build_schema(build)
         }
 
-        /// Initializes the schema for the refiner based on the data types of the  probe geometries.
-        pub fn init_probe_schema(&mut self, probe: &DataType) -> Result<()> {
-            self.inner.init_probe_schema(probe)
-        }
-
         /// Clears any previously inserted data from the refiner, allowing it to be reused for building a new set of geometries.
         pub fn clear(&mut self) {
             self.inner.clear()
@@ -227,9 +222,6 @@ mod sys {
             Err(GpuSpatialError::GpuNotAvailable)
         }
 
-        pub fn init_probe_schema(&mut self, _p: &DataType) -> Result<()> {
-            Err(GpuSpatialError::GpuNotAvailable)
-        }
         pub fn clear(&mut self) {}
         pub fn push_build(&mut self, _arr: &arrow_array::ArrayRef) -> Result<()> {
             Err(GpuSpatialError::GpuNotAvailable)
@@ -328,8 +320,6 @@ mod tests {
 
         // 2. Build Refiner
         refiner.init_build_schema(polygons.data_type()).unwrap();
-
-        refiner.init_probe_schema(points.data_type()).unwrap();
 
         refiner.push_build(&polygons).unwrap();
 

@@ -23,10 +23,9 @@ use crate::index::spatial_index::SpatialIndexRef;
 use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
 use crate::index::{BuildPartition, DefaultSpatialIndexBuilder};
 use crate::partitioning::stream_repartitioner::{SpilledPartition, SpilledPartitions};
-use crate::spatial_predicate::SpatialRelationType;
 use crate::utils::disposable_async_cell::DisposableAsyncCell;
 use crate::{partitioning::SpatialPartition, spatial_predicate::SpatialPredicate};
-use arrow_schema::{DataType, SchemaRef};
+use arrow_schema::SchemaRef;
 use async_trait::async_trait;
 use datafusion_common::{DataFusionError, Result, SharedResult};
 use datafusion_common_runtime::JoinSet;
@@ -57,7 +56,6 @@ pub(crate) struct PartitionedIndexProvider {
     /// The memory reserved in the build side collection phase. We'll hold them until
     /// we don't need to build spatial indexes.
     _reservations: Vec<MemoryReservation>,
-    probe_datatype: DataType,
 }
 
 pub(crate) enum BuildSideData {
@@ -109,9 +107,9 @@ impl SpatialIndexBuilder for SpatialIndexBuilderWrapper {
     }
 
     fn estimate_extra_memory_usage(
-        geo_stats: &GeoStatistics,
-        spatial_predicate: &SpatialPredicate,
-        options: &SpatialJoinOptions,
+        _geo_stats: &GeoStatistics,
+        _spatial_predicate: &SpatialPredicate,
+        _options: &SpatialJoinOptions,
     ) -> usize {
         todo!()
     }
@@ -128,7 +126,6 @@ impl PartitionedIndexProvider {
         partitioned_spill_files: SpilledPartitions,
         metrics: SpatialJoinBuildMetrics,
         reservations: Vec<MemoryReservation>,
-        probe_datatype: DataType,
     ) -> Self {
         let num_partitions = partitioned_spill_files.num_regular_partitions();
         let index_cells = (0..num_partitions)
@@ -144,7 +141,6 @@ impl PartitionedIndexProvider {
             data: BuildSideData::MultiPartition(Mutex::new(partitioned_spill_files)),
             index_cells,
             _reservations: reservations,
-            probe_datatype,
         }
     }
 
@@ -157,7 +153,6 @@ impl PartitionedIndexProvider {
         probe_threads_count: usize,
         mut build_partitions: Vec<BuildPartition>,
         metrics: SpatialJoinBuildMetrics,
-        probe_datatype: DataType,
     ) -> Self {
         let reservations = build_partitions
             .iter_mut()
@@ -174,7 +169,6 @@ impl PartitionedIndexProvider {
             data: BuildSideData::SinglePartition(Mutex::new(Some(build_partitions))),
             index_cells,
             _reservations: reservations,
-            probe_datatype,
         }
     }
 
@@ -195,7 +189,6 @@ impl PartitionedIndexProvider {
             probe_threads_count,
             build_partitions,
             metrics,
-            DataType::Null,
         )
     }
 
@@ -402,7 +395,6 @@ impl PartitionedIndexProvider {
                 self.join_type,
                 self.probe_threads_count,
                 self.metrics.clone(),
-                self.probe_datatype.clone(),
             );
             Ok(SpatialIndexBuilderWrapper::Gpu(builder))
         } else {

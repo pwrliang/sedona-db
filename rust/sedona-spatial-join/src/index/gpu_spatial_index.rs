@@ -26,7 +26,6 @@ use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::SchemaRef;
 use async_trait::async_trait;
 use datafusion_common::{DataFusionError, Result};
-use datafusion_execution::memory_pool::MemoryReservation;
 use geo_types::{coord, Rect};
 use parking_lot::Mutex;
 use sedona_common::{ExecutionMode, SpatialJoinOptions};
@@ -309,7 +308,7 @@ mod tests {
     use crate::evaluated_batch::EvaluatedBatch;
     use crate::index::spatial_index::SpatialIndexRef;
     use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
-    use crate::index::{DefaultSpatialIndexBuilder, GPUSpatialIndexBuilder};
+    use crate::index::GPUSpatialIndexBuilder;
     use crate::operand_evaluator::EvaluatedGeometryArray;
     use crate::spatial_predicate::{RelationPredicate, SpatialRelationType};
     use crate::SpatialPredicate;

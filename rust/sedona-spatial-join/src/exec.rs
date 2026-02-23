@@ -16,7 +16,7 @@
 // under the License.
 use std::{fmt::Formatter, sync::Arc};
 
-use arrow_schema::{DataType, SchemaRef};
+use arrow_schema::SchemaRef;
 use datafusion_common::{project_schema, JoinSide, Result};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_expr::JoinType;
@@ -70,39 +70,6 @@ fn determine_knn_build_probe_plans<'a>(
         JoinSide::Left => Ok((right_plan, left_plan)),
         JoinSide::Right => Ok((left_plan, right_plan)),
         JoinSide::None => sedona_internal_err!("KNN join requires explicit probe_side designation"),
-    }
-}
-
-fn determine_build_probe_datatypes<'a>(
-    on: &SpatialPredicate,
-    left_plan: &'a Arc<dyn ExecutionPlan>,
-    right_plan: &'a Arc<dyn ExecutionPlan>,
-) -> Result<(DataType, DataType)> {
-    let left_schema = left_plan.schema();
-    let right_schema = right_plan.schema();
-
-    match on {
-        SpatialPredicate::Distance(d) => Ok((
-            d.left.data_type(left_schema.as_ref())?,
-            d.right.data_type(right_schema.as_ref())?,
-        )),
-        SpatialPredicate::Relation(r) => Ok((
-            r.left.data_type(left_schema.as_ref())?,
-            r.right.data_type(right_schema.as_ref())?,
-        )),
-        SpatialPredicate::KNearestNeighbors(knn) => match knn.probe_side {
-            JoinSide::Left => Ok((
-                knn.right.data_type(right_schema.as_ref())?, // Build (Right Plan)
-                knn.left.data_type(left_schema.as_ref())?,   // Probe (Left Plan)
-            )),
-            JoinSide::Right => Ok((
-                knn.right.data_type(left_schema.as_ref())?, // Build (Left Plan)
-                knn.left.data_type(right_schema.as_ref())?, // Probe (Right Plan)
-            )),
-            JoinSide::None => {
-                sedona_internal_err!("KNN join requires explicit probe_side designation")
-            }
-        },
     }
 }
 
@@ -480,8 +447,6 @@ impl ExecutionPlan for SpatialJoinExec {
             }
             _ => (&self.left, &self.right, JoinSide::Right),
         };
-        let (_build_datatype, probe_datatype) =
-            determine_build_probe_datatypes(&self.on, &self.left, &self.right)?;
 
         // Determine which input index corresponds to the probe side for ordering checks
         let probe_input_index = if probe_side == JoinSide::Left { 0 } else { 1 };
@@ -508,7 +473,6 @@ impl ExecutionPlan for SpatialJoinExec {
                         probe_thread_count,
                         self.metrics.clone(),
                         self.seed,
-                        probe_datatype,
                     );
                     Ok(spatial_join_components_builder.build(build_streams))
                 })?

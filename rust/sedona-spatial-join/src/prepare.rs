@@ -17,7 +17,7 @@
 
 use std::{mem, sync::Arc};
 
-use arrow_schema::{DataType, SchemaRef};
+use arrow_schema::SchemaRef;
 use datafusion_common::Result;
 use datafusion_common_runtime::JoinSet;
 use datafusion_execution::{
@@ -74,7 +74,6 @@ pub(crate) struct SpatialJoinComponentsBuilder {
     metrics: ExecutionPlanMetricsSet,
     seed: u64,
     sedona_options: SedonaOptions,
-    probe_datatype: DataType,
 }
 
 impl SpatialJoinComponentsBuilder {
@@ -88,7 +87,6 @@ impl SpatialJoinComponentsBuilder {
         probe_threads_count: usize,
         metrics: ExecutionPlanMetricsSet,
         seed: u64,
-        probe_datatype: DataType,
     ) -> Self {
         let session_config = context.session_config();
         let sedona_options = session_config
@@ -106,7 +104,6 @@ impl SpatialJoinComponentsBuilder {
             metrics,
             seed,
             sedona_options,
-            probe_datatype,
         }
     }
 
@@ -433,7 +430,6 @@ impl SpatialJoinComponentsBuilder {
             self.probe_threads_count,
             build_partitions,
             SpatialJoinBuildMetrics::new(0, &self.metrics),
-            self.probe_datatype,
         );
 
         let probe_stream_options = ProbeStreamOptions {
@@ -472,7 +468,6 @@ impl SpatialJoinComponentsBuilder {
             merged_spilled_partitions,
             SpatialJoinBuildMetrics::new(0, &self.metrics),
             reservations,
-            self.probe_datatype,
         );
 
         let buffer_bytes_threshold = memory_for_intermittent_usage / self.probe_threads_count;
