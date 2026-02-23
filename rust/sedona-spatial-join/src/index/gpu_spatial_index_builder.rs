@@ -208,14 +208,25 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
                 .collect();
             let concat_array = concat(&references)?;
 
+            // rects have been computed by EvaluatedGeometryArray::try_new, we just need to concatenate them
+            let rects = self
+                .indexed_batches
+                .iter()
+                .flat_map(|batch| batch.geom_array.rects.iter().cloned())
+                .collect();
             let eval_batch = EvaluatedBatch {
                 batch,
-                geom_array: EvaluatedGeometryArray::try_new(concat_array, &sedona_type)?,
+                geom_array: EvaluatedGeometryArray {
+                    sedona_type: sedona_type.clone(),
+                    geometry_array: Arc::new(concat_array),
+                    rects,
+                    distance: None,
+                    wkbs: vec![],
+                },
             };
             self.indexed_batches.clear();
             self.indexed_batches.push(eval_batch);
         }
-
         let mut data_id_to_batch_pos: Vec<(i32, i32)> = Vec::with_capacity(
             self.indexed_batches
                 .iter()
@@ -269,7 +280,6 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
         index.finish_building().map_err(|e| {
             DataFusionError::Execution(format!("Failed to build spatial index on GPU {e:?}"))
         })?;
-
         build_timer.done();
         let visited_build_side = self.build_visited_bitmaps()?;
         let evaluator = create_operand_evaluator(&self.spatial_predicate, self.options.clone());

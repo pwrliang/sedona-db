@@ -14,11 +14,9 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use core::fmt;
-use std::{mem::transmute, sync::Arc};
-
 use arrow_array::{Array, ArrayRef, Float64Array, RecordBatch};
 use arrow_schema::DataType;
+use core::fmt;
 use datafusion_common::{utils::proxy::VecAllocExt, JoinSide, Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use datafusion_physical_expr::PhysicalExpr;
@@ -28,6 +26,7 @@ use geo_types::{coord, Rect};
 use sedona_functions::executor::IterGeo;
 use sedona_geo_generic_alg::BoundingRect;
 use sedona_schema::datatypes::SedonaType;
+use std::{mem::transmute, sync::Arc};
 use wkb::reader::Wkb;
 
 use sedona_common::option::SpatialJoinOptions;
@@ -103,7 +102,7 @@ pub struct EvaluatedGeometryArray {
     /// but we'll only allow accessing Wkb<'a> where 'a is the lifetime of the GeometryBatchResult to make
     /// the interfaces safe. The buffers in `geometry_array` are allocated on the heap and won't be moved when
     /// the GeometryBatchResult is moved, so we don't need to worry about pinning.
-    wkbs: Vec<Option<Wkb<'static>>>,
+    pub wkbs: Vec<Option<Wkb<'static>>>,
 }
 
 impl EvaluatedGeometryArray {
@@ -200,7 +199,6 @@ impl EvaluatedGeometryArray {
             wkbs,
         })
     }
-
     /// Get the WKBs of the geometries in the geometry array.
     pub fn wkbs(&self) -> &Vec<Option<Wkb<'_>>> {
         // The returned WKBs are guaranteed to be valid for the lifetime of the GeometryBatchResult,
