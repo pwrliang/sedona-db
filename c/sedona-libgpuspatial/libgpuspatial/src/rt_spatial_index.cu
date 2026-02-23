@@ -30,6 +30,7 @@
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
 #include <thrust/unique.h>
+#include <cuda/std/iterator>
 
 #define OPTIX_MAX_RAYS (1lu << 30)
 
