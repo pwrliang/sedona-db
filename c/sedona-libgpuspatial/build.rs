@@ -148,15 +148,38 @@ fn main() {
         println!("cargo:rustc-link-search=native={}/build", dst.display()); // gpuspatial_c defined in CMakeLists.txt
 
         // Detect CUDA library path from CUDA_HOME or default locations
-        let cuda_lib_path = if let Ok(cuda_home) = env::var("CUDA_HOME") {
-            format!("{cuda_home}/lib64")
-        } else if std::path::Path::new("/usr/local/cuda/lib64").exists() {
-            "/usr/local/cuda/lib64".to_string()
-        } else {
-            panic!("CUDA lib is not found. Neither CUDA_HOME is set nor the default path /usr/local/cuda/lib64 exists.");
-        };
+        let mut cuda_lib_paths = Vec::new();
 
-        println!("cargo:rustc-link-search=native={cuda_lib_path}"); // CUDA runtime
+        // 1. Check CUDA_HOME for both lib and lib64
+        if let Ok(cuda_home) = env::var("CUDA_HOME") {
+            let home_path = PathBuf::from(cuda_home);
+            let check_lib64 = home_path.join("lib64");
+            let check_lib = home_path.join("lib");
+
+            if check_lib64.exists() {
+                cuda_lib_paths.push(check_lib64);
+            }
+            if check_lib.exists() {
+                cuda_lib_paths.push(check_lib);
+            }
+        }
+
+        // 2. If nothing found in CUDA_HOME (or it wasn't set), check standard fallback locations
+        if cuda_lib_paths.is_empty() {
+            if Path::new("/usr/local/cuda/lib64").exists() {
+                cuda_lib_paths.push(PathBuf::from("/usr/local/cuda/lib64"));
+            } else if Path::new("/usr/local/cuda/lib").exists() {
+                cuda_lib_paths.push(PathBuf::from("/usr/local/cuda/lib"));
+            } else {
+                panic!("CUDA lib is not found. Neither CUDA_HOME is set nor the default paths exist.");
+            }
+        }
+
+        // 3. Apply all found paths for linking and runtime path (rpath)
+        for path in cuda_lib_paths {
+            println!("cargo:rustc-link-search=native={}", path.display());
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path.display());
+        }
 
         if let Some(driver_lib_path) = find_cuda_driver_path() {
             println!(
