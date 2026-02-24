@@ -24,6 +24,7 @@ fn find_cuda_driver_path() -> Option<PathBuf> {
         "/usr/lib/x86_64-linux-gnu",
         "/usr/lib64/nvidia",
         "/usr/local/cuda/lib64",
+        "/lib64"
     ];
     for path_str in default_paths {
         let path = Path::new(path_str);
@@ -133,10 +134,15 @@ fn main() {
             .define("SPDLOG_FMT_EXTERNAL", "OFF") // Prevent spdlog from using external fmt library
             .build();
         let include_path = dst.join("include");
-        println!(
-            "cargo:rustc-link-search=native={}",
-            dst.join("lib").display()
-        ); // Link to the cmake output lib directory
+        let lib_dir = dst.join("lib");
+        let lib64_dir = dst.join("lib64");
+
+        if lib_dir.exists() {
+            println!("cargo:rustc-link-search=native={}", lib_dir.display());
+        }
+        if lib64_dir.exists() {
+            println!("cargo:rustc-link-search=native={}", lib64_dir.display());
+        }
 
         // Link to the static libraries and CUDA runtime
         println!("cargo:rustc-link-search=native={}/build", dst.display()); // gpuspatial_c defined in CMakeLists.txt
