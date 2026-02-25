@@ -132,6 +132,7 @@ fn main() {
             .define("CMAKE_POLICY_VERSION_MINIMUM", "3.5") // Allow older CMake versions
             .define("LIBGPUSPATIAL_LOGGING_LEVEL", "WARN") // Set logging level
             .define("SPDLOG_FMT_EXTERNAL", "OFF") // Prevent spdlog from using external fmt library
+            .define("GPUSPATIAL_PROFILING", "OFF")
             .build();
         let include_path = dst.join("include");
         let lib_dir = dst.join("lib");
