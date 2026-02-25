@@ -272,6 +272,10 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::Clear() {
   GPUSPATIAL_LOG_INFO("RTSpatialIndex %p (Free %zu MB), Clear", this,
                       rmm::available_device_memory().first / 1024 / 1024);
   auto stream = rmm::cuda_stream_default;
+#ifdef GPUSPATIAL_PROFILING
+  push_build_ms_ = 0.0;
+  finish_building_ms_ = 0.0;
+#endif
   bvh_buffer_.resize(0, stream);
   bvh_buffer_.shrink_to_fit(stream);
   rects_.resize(0, stream);
@@ -283,21 +287,30 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::Clear() {
 
 template <typename SCALAR_T, int N_DIM>
 void RTSpatialIndex<SCALAR_T, N_DIM>::PushBuild(const box_t* rects, uint32_t n_rects) {
-  GPUSPATIAL_LOG_INFO("RTSpatialIndex %p (Free %zu MB), PushBuild, rectangles %zu", this,
+  GPUSPATIAL_LOG_INFO("RTSpatialIndex %p (Free %zu MB), PushBuild, Rectangles %zu", this,
                       rmm::available_device_memory().first / 1024 / 1024, n_rects);
   if (n_rects == 0) return;
   auto stream = rmm::cuda_stream_default;
   auto prev_size = rects_.size();
 
+#ifdef GPUSPATIAL_PROFILING
+  Stopwatch sw(true);
+#endif
   rects_.resize(rects_.size() + n_rects, stream);
   CUDA_CHECK(cudaMemcpyAsync(rects_.data() + prev_size, rects, sizeof(box_t) * n_rects,
                              cudaMemcpyHostToDevice, stream));
+#ifdef GPUSPATIAL_PROFILING
+  stream.synchronize();
+  push_build_ms_ += sw.stop();
+#endif
 }
 
 template <typename SCALAR_T, int N_DIM>
 void RTSpatialIndex<SCALAR_T, N_DIM>::FinishBuilding() {
   auto stream = rmm::cuda_stream_default;
-
+#ifdef GPUSPATIAL_PROFILING
+  Stopwatch sw(true);
+#endif
   indexing_points_ =
       thrust::all_of(rmm::exec_policy_nosync(stream), rects_.begin(), rects_.end(),
                      [] __device__(const box_t& box) -> bool {
@@ -324,11 +337,18 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::FinishBuilding() {
   handle_ = config_.rt_engine->BuildAccelCustom(stream, ArrayView<OptixAabb>(aabbs),
                                                 bvh_buffer_, config_.prefer_fast_build,
                                                 config_.compact);
-
+  stream.synchronize();
   GPUSPATIAL_LOG_INFO(
       "RTSpatialIndex %p (Free %zu MB), FinishBuilding Index on %s, Total geoms: %zu",
       this, rmm::available_device_memory().first / 1024 / 1024,
       indexing_points_ ? "Points" : "Rectangles", numGeometries());
+#ifdef GPUSPATIAL_PROFILING
+  finish_building_ms_ = sw.stop();
+  GPUSPATIAL_LOG_INFO(
+      "RTSpatialIndex %p (Free %zu MB), Profiling Results. PushBuild: %.2lf ms, FinishBuilding: %.2f ms",
+      this, rmm::available_device_memory().first / 1024 / 1024, push_build_ms_,
+      finish_building_ms_);
+#endif
 }
 
 template <typename SCALAR_T, int N_DIM>
@@ -340,6 +360,9 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::Probe(const box_t* rects, uint32_t n_rects
   // Tracing. InProceedings of the 30th ACM SIGPLAN Annual Symposium on Principles and
   // Practice of Parallel Programming 2025"
   if (n_rects == 0) return;
+#ifdef GPUSPATIAL_PROFILING
+  Stopwatch sw(true);
+#endif
   SpatialIndexContext ctx;
   auto stream = stream_pool_->get_stream();
   rmm::device_uvector<box_t> d_rects(n_rects, stream);
@@ -365,12 +388,8 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::Probe(const box_t* rects, uint32_t n_rects
         [] __device__(const box_t& box) -> point_t { return box.get_min(); });
     d_rects.resize(0, stream);
     d_rects.shrink_to_fit(stream);
-
   } else {
     // Build a BVH over the MBRs of the stream geometries
-#ifdef GPUSPATIAL_PROFILING
-    ctx.timer.start(stream);
-#endif
     rmm::device_uvector<OptixAabb> aabbs(n_rects, stream);
     thrust::transform(
         rmm::exec_policy_nosync(stream), d_rects.begin(), d_rects.end(), aabbs.begin(),
@@ -378,19 +397,16 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::Probe(const box_t* rects, uint32_t n_rects
     ctx.handle = config_.rt_engine->BuildAccelCustom(
         stream, ArrayView<OptixAabb>(aabbs), ctx.bvh_buffer, config_.prefer_fast_build,
         config_.compact);
-#ifdef GPUSPATIAL_PROFILING
-    ctx.bvh_build_ms = ctx.timer.stop(stream);
-#endif
   }
-
+#ifdef GPUSPATIAL_PROFILING
+  ctx.stream.synchronize();
+  ctx.prepare_ms = sw.stop();
+#endif
   ctx.counter = std::make_unique<rmm::device_scalar<uint32_t>>(0, stream);
 
   bool swap_ids = false;
 
   auto query = [&](bool counting) {
-#ifdef GPUSPATIAL_PROFILING
-    ctx.timer.start(stream);
-#endif
     if (indexing_points_) {
       if (probe_points) {
         handleBuildPoint(ctx, ArrayView<point_t>(d_points), counting);
@@ -405,9 +421,6 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::Probe(const box_t* rects, uint32_t n_rects
         handleBuildBox(ctx, ArrayView<box_t>(d_rects), counting);
       }
     }
-#ifdef GPUSPATIAL_PROFILING
-    ctx.rt_ms += ctx.timer.stop(stream);
-#endif
   };
 
   // first pass: counting
@@ -433,7 +446,6 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::Probe(const box_t* rects, uint32_t n_rects
   }
 
 #ifdef GPUSPATIAL_PROFILING
-  Stopwatch sw;
   sw.start();
 #endif
   build_indices->resize(result_size);
@@ -446,15 +458,20 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::Probe(const box_t* rects, uint32_t n_rects
                              sizeof(index_t) * result_size, cudaMemcpyDeviceToHost,
                              stream));
   stream.synchronize();
+
+  GPUSPATIAL_LOG_INFO(
+      "RTSpatialIndex %p (Free %zu MB), Probe %s, Size: %zu, Results: %zu", this,
+      rmm::available_device_memory().first / 1024 / 1024,
+      probe_points ? "Points" : "Rectangles",
+      probe_points ? d_points.size() : d_rects.size(), build_indices->size());
+
 #ifdef GPUSPATIAL_PROFILING
   sw.stop();
   ctx.copy_res_ms = sw.ms();
   GPUSPATIAL_LOG_INFO(
-      "RTSpatialIndex %p (Free %zu MB), Probe %s, Size: %zu, Results: %zu, Alloc: %.2f ms, BVH Build: %.2f ms, RT: %.2f ms, Copy res: %.2f ms",
-      this, rmm::available_device_memory().first / 1024 / 1024,
-      probe_points ? "Points" : "Rectangles",
-      probe_points ? d_points.size() : d_rects.size(), build_indices->size(),
-      ctx.alloc_ms, ctx.bvh_build_ms, ctx.rt_ms, ctx.copy_res_ms);
+      "RTSpatialIndex %p (Free %zu MB), Profiling Results. Alloc: %.2lf ms, Prepare: %.2lf ms, RT: %.2f ms, Copy res: %.2lf ms",
+      this, rmm::available_device_memory().first / 1024 / 1024, ctx.alloc_ms,
+      ctx.prepare_ms, ctx.rt_ms, ctx.copy_res_ms);
 #endif
 }
 
@@ -599,9 +616,8 @@ template <typename SCALAR_T, int N_DIM>
 void RTSpatialIndex<SCALAR_T, N_DIM>::allocateResultBuffer(SpatialIndexContext& ctx,
                                                            uint32_t capacity) const {
 #ifdef GPUSPATIAL_PROFILING
-  ctx.timer.start(ctx.stream);
+  Stopwatch sw(true);
 #endif
-
   GPUSPATIAL_LOG_INFO(
       "RTSpatialIndex %p (Free %zu MB), Allocate result buffer, memory consumption %zu MB, capacity %u",
       this, rmm::available_device_memory().first / 1024 / 1024,
@@ -610,7 +626,8 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::allocateResultBuffer(SpatialIndexContext& 
   ctx.build_indices.Init(ctx.stream, capacity);
   ctx.probe_indices.resize(capacity, ctx.stream);
 #ifdef GPUSPATIAL_PROFILING
-  ctx.alloc_ms += ctx.timer.stop(ctx.stream);
+  ctx.stream.synchronize();
+  ctx.alloc_ms += sw.stop();
 #endif
 }
 
@@ -652,7 +669,7 @@ template <typename SCALAR_T, int N_DIM>
 void RTSpatialIndex<SCALAR_T, N_DIM>::filter(SpatialIndexContext& ctx,
                                              uint32_t dim_x) const {
 #ifdef GPUSPATIAL_PROFILING
-  ctx.timer.start(ctx.stream);
+  Stopwatch sw(true);
 #endif
   if (dim_x > 0) {
     config_.rt_engine->Render(ctx.stream, ctx.shader_id, dim3{dim_x, 1, 1},
@@ -660,7 +677,8 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::filter(SpatialIndexContext& ctx,
                                               ctx.launch_params_buffer.size()));
   }
 #ifdef GPUSPATIAL_PROFILING
-  ctx.rt_ms += ctx.timer.stop(ctx.stream);
+  ctx.stream.synchronize();
+  ctx.rt_ms += sw.stop();
 #endif
 }
 

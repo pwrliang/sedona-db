@@ -91,19 +91,44 @@ RTSpatialRefiner::RTSpatialRefiner(const RTSpatialRefinerConfig& config)
 
 void RTSpatialRefiner::Clear() {
   auto stream = rmm::cuda_stream_default;
+#ifdef GPUSPATIAL_PROFILING
+  push_build_ms_ = 0.0;
+  finish_building_ms_ = 0.0;
+#endif
   wkb_loader_->Clear(stream);
   build_geometries_.Clear(stream);
 }
 
 void RTSpatialRefiner::PushBuild(const ArrowArrayView* build_array) {
   auto stream = rmm::cuda_stream_default;
-
+#ifdef GPUSPATIAL_PROFILING
+  Stopwatch sw(true);
+#endif
   wkb_loader_->Parse(stream, build_array, 0, build_array->length);
+#ifdef GPUSPATIAL_PROFILING
+  stream.synchronize();
+  push_build_ms_ += sw.stop();
+#endif
 }
 
 void RTSpatialRefiner::FinishBuilding() {
   auto stream = rmm::cuda_stream_default;
+#ifdef GPUSPATIAL_PROFILING
+  Stopwatch sw(true);
+#endif
   build_geometries_ = std::move(wkb_loader_->Finish(stream));
+  stream.synchronize();
+#ifdef GPUSPATIAL_PROFILING
+  finish_building_ms_ = sw.stop();
+  GPUSPATIAL_LOG_INFO(
+      "RTSpatialRefiner %p (Free %zu MB), Profiling Results. PushBuild: %.2lf ms, FinishBuilding: %.2lf ms",
+      this, rmm::available_device_memory().first / 1024 / 1024, push_build_ms_,
+      finish_building_ms_);
+#endif
+  GPUSPATIAL_LOG_INFO(
+      "RTSpatialRefiner %p (Free %zu MB), FinishBuilding Refiner, Total geoms: %zu", this,
+      rmm::available_device_memory().first / 1024 / 1024,
+      build_geometries_.num_features());
 }
 
 uint32_t RTSpatialRefiner::Refine(const ArrowArrayView* probe_array, Predicate predicate,
@@ -117,6 +142,9 @@ uint32_t RTSpatialRefiner::Refine(const ArrowArrayView* probe_array, Predicate p
     return RefinePipelined(probe_array, predicate, build_indices, probe_indices, len);
   }
 
+#ifdef GPUSPATIAL_PROFILING
+  Stopwatch sw(true);
+#endif
   SpatialRefinerContext ctx;
   ctx.cuda_stream = stream_pool_->get_stream();
 
@@ -140,12 +168,20 @@ uint32_t RTSpatialRefiner::Refine(const ArrowArrayView* probe_array, Predicate p
                probe_indices_map.h_uniq_indices.end());
   auto probe_geoms = std::move(loader.Finish(ctx.cuda_stream));
 
+#ifdef GPUSPATIAL_PROFILING
+  ctx.cuda_stream.synchronize();
+  ctx.parse_ms = sw.stop();
+#endif
+
   GPUSPATIAL_LOG_INFO(
       "RTSpatialRefiner %p (Free %zu MB), Loaded Geometries, ProbeArray %ld, Loaded %u, Type %s",
       this, rmm::available_device_memory().first / 1024 / 1024, probe_array->length,
       probe_geoms.num_features(),
       GeometryTypeToString(probe_geoms.get_geometry_type()).c_str());
 
+#ifdef GPUSPATIAL_PROFILING
+  sw.start();
+#endif
   RelateEngine<point_t, index_t> relate_engine(&build_geometries_,
                                                config_.rt_engine.get());
   RelateEngine<point_t, index_t>::Config re_config;
@@ -166,20 +202,14 @@ uint32_t RTSpatialRefiner::Refine(const ArrowArrayView* probe_array, Predicate p
       this, rmm::available_device_memory().first / 1024 / 1024, len,
       PredicateToString(predicate));
 
-#ifdef GPUSPATIAL_PROFILING
-  ctx.timer.start(ctx.cuda_stream);
-#endif
-
   relate_engine.Evaluate(ctx.cuda_stream, probe_geoms, predicate, d_build_indices,
                          probe_indices_map.d_reordered_indices);
   auto new_size = d_build_indices.size();
 #ifdef GPUSPATIAL_PROFILING
-  float refine_ms = ctx.timer.stop(ctx.cuda_stream);
-  GPUSPATIAL_LOG_INFO("RTSpatialRefiner %p (Free %zu MB), Refine time %f, new size %zu",
-                      this, rmm::available_device_memory().first / 1024 / 1024, refine_ms,
-                      new_size);
+  ctx.cuda_stream.synchronize();
+  ctx.refine_ms = sw.stop();
+  sw.start();
 #endif
-
   d_probe_indices.resize(new_size, ctx.cuda_stream);
 
   thrust::gather(rmm::exec_policy_nosync(ctx.cuda_stream),
@@ -200,6 +230,15 @@ uint32_t RTSpatialRefiner::Refine(const ArrowArrayView* probe_array, Predicate p
                              sizeof(uint32_t) * new_size, cudaMemcpyDeviceToHost,
                              ctx.cuda_stream));
   ctx.cuda_stream.synchronize();
+#ifdef GPUSPATIAL_PROFILING
+  ctx.copy_res_ms = sw.stop();
+#endif
+
+  GPUSPATIAL_LOG_INFO(
+      "RTSpatialRefiner %p (Free %zu MB), Profiling Results. Parse: %.2lf ms, Refine: %.2lf ms, Copy Results: %.2lf ms",
+      this, rmm::available_device_memory().first / 1024 / 1024, len, ctx.parse_ms,
+      ctx.refine_ms, ctx.copy_res_ms);
+
   return new_size;
 }
 
@@ -237,7 +276,7 @@ uint32_t RTSpatialRefiner::RefinePipelined(const ArrowArrayView* probe_array,
   size_t batch_size = (len + n_batches - 1) / n_batches;
 
   GPUSPATIAL_LOG_INFO(
-      "RTSpatialRefiner %p, pipeline refinement, total len %u, batches %d, batch size %zu",
+      "RTSpatialRefiner %p, Pipeline Refinement. Total Len %u, Batches %d, Batch Size %zu",
       this, len, n_batches, batch_size);
 
   // Resource allocation for slots
