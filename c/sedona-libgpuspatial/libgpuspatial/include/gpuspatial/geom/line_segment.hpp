@@ -20,6 +20,8 @@
 #include "gpuspatial/utils/cuda_utils.hpp"
 #include "gpuspatial/utils/floating_point.hpp"
 
+#include <cmath>
+
 namespace gpuspatial {
 template <typename POINT_T>
 class LineSegment {
@@ -111,6 +113,95 @@ class LineSegment {
     }
 
     return PointLocation::kOutside;
+  }
+
+  template <typename point_type = POINT_T,
+            typename std::enable_if<point_type::n_dim == 2, bool>::type = true>
+  DEV_HOST_INLINE scalar_t distance(const point_type& q) const {
+    point_t const q_pt{q.x(), q.y()};
+    auto const ab_x = p2_.x() - p1_.x();
+    auto const ab_y = p2_.y() - p1_.y();
+    auto const aq_x = q_pt.x() - p1_.x();
+    auto const aq_y = q_pt.y() - p1_.y();
+    auto const ab_len_sq = ab_x * ab_x + ab_y * ab_y;
+    scalar_t constexpr zero = 0.0;
+
+    // Degenerate segment: fall back to point-to-point distance.
+    if (float_equal(ab_len_sq, zero)) {
+      return p1_.distance(q_pt);
+    }
+
+    // Project q onto line AB using normalized dot product.
+    auto const r = (aq_x * ab_x + aq_y * ab_y) / ab_len_sq;
+
+    // Projection before A: closest point is A.
+    if (r <= zero) {
+      return p1_.distance(q_pt);
+    }
+
+    // Projection after B: closest point is B.
+    if (r >= scalar_t{1}) {
+      return p2_.distance(q_pt);
+    }
+
+    // Projection lies on segment interior.
+    point_t const proj{p1_.x() + r * ab_x, p1_.y() + r * ab_y};
+    return q_pt.distance(proj);
+  }
+
+  template <typename point_type = POINT_T,
+            typename std::enable_if<point_type::n_dim == 2, bool>::type = true>
+  DEV_HOST_INLINE scalar_t distance(const LineSegment<point_type>& other) const {
+    scalar_t constexpr zero = 0.0;
+    scalar_t constexpr one = 1.0;
+
+    // Degenerate segment: reduce to point-to-segment distance.
+    if (p1_ == p2_) {
+      return other.distance(p1_);
+    }
+
+    if (other.get_p1() == other.get_p2()) {
+      return distance(other.get_p1());
+    }
+
+    bool no_intersection = false;
+
+    // Fast reject: disjoint bounding boxes cannot intersect.
+    if (!get_mbr().intersects(other.get_mbr())) {
+      no_intersection = true;
+    } else {
+      auto const& a = p1_;
+      auto const& b = p2_;
+      auto const& c = other.get_p1();
+      auto const& d = other.get_p2();
+
+      auto const denom =
+          (b.x() - a.x()) * (d.y() - c.y()) - (b.y() - a.y()) * (d.x() - c.x());
+
+      // Parallel (including collinear) lines are handled by endpoint fallback.
+      if (float_equal(denom, zero)) {
+        no_intersection = true;
+      } else {
+        auto const r_num =
+            (a.y() - c.y()) * (d.x() - c.x()) - (a.x() - c.x()) * (d.y() - c.y());
+        auto const s_num =
+            (a.y() - c.y()) * (b.x() - a.x()) - (a.x() - c.x()) * (b.y() - a.y());
+
+        auto const r = r_num / denom;
+        auto const s = s_num / denom;
+
+        no_intersection = (r < zero) || (r > one) || (s < zero) || (s > one);
+      }
+    }
+
+    if (no_intersection) {
+      // Minimum of endpoint-to-opposite-segment distances.
+      return std::min(distance(other.get_p1()),
+                      std::min(distance(other.get_p2()),
+                               std::min(other.distance(p1_), other.distance(p2_))));
+    }
+
+    return zero;
   }
 
  private:

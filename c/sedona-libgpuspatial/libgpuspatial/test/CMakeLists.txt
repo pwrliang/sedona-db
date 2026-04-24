@@ -92,6 +92,20 @@ if(GPUSPATIAL_BUILD_TESTS)
                                 Arrow::arrow_static
                                 Parquet::parquet_static)
 
+  add_executable(distance_test main.cc distance_test.cu)
+  target_link_libraries(distance_test
+                        PRIVATE cuda
+                                GTest::gtest_main
+                                GTest::gmock_main
+                                gpuspatial
+                                GEOS::geos
+                                nanoarrow::nanoarrow
+                                Arrow::arrow_static
+                                Parquet::parquet_static)
+  target_compile_options(distance_test
+                         PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda
+                                 --expt-relaxed-constexpr>)
+
   include(GoogleTest)
 
   gtest_discover_tests(gpuspatial_testing_test)
@@ -99,4 +113,5 @@ if(GPUSPATIAL_BUILD_TESTS)
   gtest_discover_tests(loader_test)
   gtest_discover_tests(relate_test)
   gtest_discover_tests(c_wrapper_test)
+  gtest_discover_tests(distance_test)
 endif()

@@ -21,6 +21,8 @@
 #include "gpuspatial/utils/floating_point.hpp"
 #include "gpuspatial/utils/type_traits.hpp"
 
+#include <cmath>
+
 namespace gpuspatial {
 enum class PointLocation {
   kOutside,
@@ -153,6 +155,15 @@ class Point {
       }
     }
     return false;
+  }
+
+  DEV_HOST_INLINE scalar_t distance(const point_t& other) const {
+    scalar_t sum_sq = 0;
+    for (int dim = 0; dim < N_DIM; dim++) {
+      auto const d = get_coordinate(dim) - other.get_coordinate(dim);
+      sum_sq += d * d;
+    }
+    return std::sqrt(sum_sq);
   }
 
   DEV_HOST_INLINE Point operator+(const Point& other) const {
