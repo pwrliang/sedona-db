@@ -545,24 +545,24 @@ void TestRelatePolygonRT(const char* wkt1, const char* wkt2, bool check_im = tru
 template <typename GEOMETRY1_T, typename GEOMETRY2_T>
 inline void TestRelate(const char* wkt1, const char* wkt2, const GEOMETRY1_T& g1,
                        const GEOMETRY2_T& g2) {
-  geos::io::WKTReader r;
-  auto a = r.read(wkt1);
-  auto b = r.read(wkt2);
-
-  geos::operation::relateng::RelateMatrixPredicate pred;
-  geos::operation::relateng::RelateNG::relate(a.get(), b.get(), pred);
-  std::string actualVal = pred.getIM()->toString();
-
-  int val = relate(g1, g2);
-  char res[10];
-  IntersectionMatrix::ToString(val, res);
-  ASSERT_STREQ(actualVal.c_str(), res);
-
   if constexpr ((std::is_same_v<GEOMETRY1_T, Polygon<point_t, index_t>> ||
                  std::is_same_v<GEOMETRY1_T, MultiPolygon<point_t, index_t>>) &&
                 (std::is_same_v<GEOMETRY2_T, Polygon<point_t, index_t>> ||
                  std::is_same_v<GEOMETRY2_T, MultiPolygon<point_t, index_t>>)) {
     TestRelatePolygonRT(wkt1, wkt2);
+  } else {
+    geos::io::WKTReader r;
+    auto a = r.read(wkt1);
+    auto b = r.read(wkt2);
+
+    geos::operation::relateng::RelateMatrixPredicate pred;
+    geos::operation::relateng::RelateNG::relate(a.get(), b.get(), pred);
+    std::string actualVal = pred.getIM()->toString();
+
+    int val = relate(g1, g2);
+    char res[10];
+    IntersectionMatrix::ToString(val, res);
+    ASSERT_STREQ(actualVal.c_str(), res);
   }
 }
 
