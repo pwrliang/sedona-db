@@ -149,6 +149,9 @@ size_t RelateEngine<POINT_T, INDEX_T>::EstimateBVHSize(
     ArrayView<uint32_t> multi_poly_ids, int segs_per_aabb) {
   auto num_aabbs =
       detail::ComputeNumAabbs(stream, multi_polys, multi_poly_ids, segs_per_aabb);
+  if (num_aabbs == 0) {
+    return 0;
+  }
 
   // temporary but still needed to consider this part of memory
   auto aabb_size = num_aabbs * sizeof(OptixAabb);
@@ -168,6 +171,9 @@ OptixTraversableHandle RelateEngine<POINT_T, INDEX_T>::BuildBVH(
     rmm::device_uvector<thrust::pair<INDEX_T, INDEX_T>>& aabb_vertex_offsets) {
   auto n_polygons = polygon_ids.size();
   auto num_aabbs = detail::ComputeNumAabbs(stream, polygons, polygon_ids, segs_per_aabb);
+  if (num_aabbs == 0) {
+    return 0;
+  }
   aabb_poly_ids = std::move(rmm::device_uvector<INDEX_T>(num_aabbs, stream));
   aabb_ring_ids = std::move(rmm::device_uvector<INDEX_T>(num_aabbs, stream));
   aabb_vertex_offsets =
@@ -246,12 +252,10 @@ OptixTraversableHandle RelateEngine<POINT_T, INDEX_T>::BuildBVH(
                         aabb.maxY = fmaxf(aabb.maxY, y);
                       }
 
-                      if (std::is_same_v<scalar_t, double>) {
-                        aabb.minX = next_float_from_double(aabb.minX, -1, 2);
-                        aabb.maxX = next_float_from_double(aabb.maxX, 1, 2);
-                        aabb.minY = next_float_from_double(aabb.minY, -1, 2);
-                        aabb.maxY = next_float_from_double(aabb.maxY, 1, 2);
-                      }
+                      aabb.minX = next_float_from_double(aabb.minX, -1, 2);
+                      aabb.maxX = next_float_from_double(aabb.maxX, 1, 2);
+                      aabb.minY = next_float_from_double(aabb.minY, -1, 2);
+                      aabb.maxY = next_float_from_double(aabb.maxY, 1, 2);
                       // Using minZ/maxZ to store polygon id for better filtering
                       // Refer to polygon_point_query.cu
                       aabb.minZ = aabb.maxZ = poly_id;
@@ -387,12 +391,10 @@ OptixTraversableHandle RelateEngine<POINT_T, INDEX_T>::BuildBVH(
                         aabb.maxY = fmaxf(aabb.maxY, y);
                       }
 
-                      if (std::is_same_v<scalar_t, double>) {
-                        aabb.minX = next_float_from_double(aabb.minX, -1, 2);
-                        aabb.maxX = next_float_from_double(aabb.maxX, 1, 2);
-                        aabb.minY = next_float_from_double(aabb.minY, -1, 2);
-                        aabb.maxY = next_float_from_double(aabb.maxY, 1, 2);
-                      }
+                      aabb.minX = next_float_from_double(aabb.minX, -1, 2);
+                      aabb.maxX = next_float_from_double(aabb.maxX, 1, 2);
+                      aabb.minY = next_float_from_double(aabb.minY, -1, 2);
+                      aabb.maxY = next_float_from_double(aabb.maxY, 1, 2);
 
                       aabb.minZ = aabb.maxZ = p_part_begins[seq_id] + part_id;
                       return aabb;
