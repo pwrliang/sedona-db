@@ -23,8 +23,14 @@
 
 #include "nanoarrow/nanoarrow.hpp"
 
+#include <geos/geom/prep/PreparedGeometry.h>
+#include <geos/geom/prep/PreparedGeometryFactory.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <chrono>
+#include <iomanip>
+#include <thread>
 
 #include "gpuspatial/index/rt_spatial_index.cuh"
 #include "gpuspatial/refine/rt_spatial_refiner.cuh"
@@ -677,4 +683,344 @@ TEST(JoinerTest, MixedGeometryBuildAndBothSidesIntersects) {
 
   TestJoinerWKT(multi_gc_side_1, multi_gc_side_2, Predicate::kIntersects);
 }
+
+namespace {
+
+bool EvaluatePreparedGeosPredicate(
+    Predicate predicate, const geos::geom::prep::PreparedGeometry* prep_build,
+    const geos::geom::Geometry* build_geom, const geos::geom::Geometry* probe_geom) {
+  switch (predicate) {
+    case Predicate::kIntersects:
+      return prep_build->intersects(probe_geom);
+    case Predicate::kContains:
+      return prep_build->contains(probe_geom);
+    case Predicate::kCovers:
+      return prep_build->covers(probe_geom);
+    case Predicate::kWithin:
+      return prep_build->within(probe_geom);
+    case Predicate::kCoveredBy:
+      return prep_build->coveredBy(probe_geom);
+    case Predicate::kTouches:
+      return prep_build->touches(probe_geom);
+    case Predicate::kDisjoint:
+      return prep_build->disjoint(probe_geom);
+    case Predicate::kEquals:
+      return build_geom->equals(probe_geom);
+    default:
+      throw std::out_of_range("Unsupported predicate");
+  }
+}
+
+std::string ResolveSyntheticPolyPath(const std::string& rel_file) {
+  const char* env_dir = std::getenv("GPUSPATIAL_TEST_DIR");
+  if (env_dir != nullptr && std::string_view(env_dir) != "") {
+    return (std::filesystem::path(env_dir) / rel_file).string();
+  }
+  std::filesystem::path fallback =
+      std::filesystem::path(__FILE__).parent_path() / "data" / rel_file;
+  if (std::filesystem::exists(fallback)) {
+    return fallback.string();
+  }
+  return TestUtils::GetTestDataPath(rel_file);
+}
+
+}  // namespace
+
+void RunPolygonBenchmarkSuite(const std::string& suite_name, ArrowSchema* build_schema,
+                              ArrowArray* build_array, ArrowSchema* probe_schema,
+                              ArrowArray* probe_array) {
+  using namespace TestUtils;
+  using coord_t = double;
+  using fpoint_t = Point<coord_t, 2>;
+  using box_t = Box<fpoint_t>;
+  using Clock = std::chrono::high_resolution_clock;
+
+  ArrowError error;
+  nanoarrow::UniqueArrayView build_view, probe_view;
+  ASSERT_EQ(ArrowArrayViewInitFromSchema(build_view.get(), build_schema, &error),
+            NANOARROW_OK);
+  ASSERT_EQ(ArrowArrayViewSetArray(build_view.get(), build_array, &error), NANOARROW_OK);
+  ASSERT_EQ(ArrowArrayViewInitFromSchema(probe_view.get(), probe_schema, &error),
+            NANOARROW_OK);
+  ASSERT_EQ(ArrowArrayViewSetArray(probe_view.get(), probe_array, &error), NANOARROW_OK);
+
+  int64_t n_build = build_array->length;
+  int64_t n_probe = probe_array->length;
+
+  std::vector<ArrowBufferView> build_wkbs(n_build), probe_wkbs(n_probe);
+  std::vector<box_t> build_boxes(n_build), probe_boxes(n_probe);
+
+  auto geos_factory = geos::geom::GeometryFactory::create();
+  geos::io::WKBReader wkb_reader(*geos_factory);
+
+  for (int64_t i = 0; i < n_build; ++i) {
+    build_wkbs[i] = ArrowArrayViewGetBytesUnsafe(build_view.get(), i);
+    auto g = wkb_reader.read(build_wkbs[i].data.as_uint8, build_wkbs[i].size_bytes);
+    const auto* env = g->getEnvelopeInternal();
+    build_boxes[i] = box_t(fpoint_t(env->getMinX(), env->getMinY()),
+                           fpoint_t(env->getMaxX(), env->getMaxY()));
+  }
+  for (int64_t i = 0; i < n_probe; ++i) {
+    probe_wkbs[i] = ArrowArrayViewGetBytesUnsafe(probe_view.get(), i);
+    auto g = wkb_reader.read(probe_wkbs[i].data.as_uint8, probe_wkbs[i].size_bytes);
+    const auto* env = g->getEnvelopeInternal();
+    probe_boxes[i] = box_t(fpoint_t(env->getMinX(), env->getMinY()),
+                           fpoint_t(env->getMaxX(), env->getMaxY()));
+  }
+
+  auto rt_engine = std::make_shared<RTEngine>();
+  rt_engine->Init(get_default_rt_config(TestUtils::GetTestShaderPath()));
+
+  RTSpatialIndexConfig idx_config;
+  idx_config.rt_engine = rt_engine;
+  auto rt_index = CreateRTSpatialIndex<coord_t, 2>(idx_config);
+  rt_index->PushBuild(build_boxes.data(), build_boxes.size());
+  rt_index->FinishBuilding();
+
+  std::vector<uint32_t> cand_build_indices, cand_probe_indices;
+  rt_index->Probe(probe_boxes.data(), probe_boxes.size(), &cand_build_indices,
+                  &cand_probe_indices);
+  size_t num_candidates = cand_build_indices.size();
+
+  unsigned int num_threads = std::max(1u, std::thread::hardware_concurrency());
+
+  // 1. Multi-threaded GEOS WKB parse + PreparedPolygon build
+  std::vector<std::unique_ptr<geos::geom::Geometry>> geos_build_geoms(n_build);
+  std::vector<std::unique_ptr<geos::geom::prep::PreparedGeometry>> geos_prep_build(
+      n_build);
+  std::vector<std::unique_ptr<geos::geom::Geometry>> geos_probe_geoms(n_probe);
+
+  auto t_geos_build_start = Clock::now();
+  {
+    std::vector<std::thread> workers;
+    for (unsigned int tid = 0; tid < num_threads; ++tid) {
+      workers.emplace_back([&, tid]() {
+        auto local_factory = geos::geom::GeometryFactory::create();
+        geos::io::WKBReader local_reader(*local_factory);
+        for (int64_t i = tid; i < n_build; i += num_threads) {
+          geos_build_geoms[i] =
+              local_reader.read(build_wkbs[i].data.as_uint8, build_wkbs[i].size_bytes);
+          geos_build_geoms[i]->getEnvelopeInternal();
+          geos_prep_build[i] =
+              geos::geom::prep::PreparedGeometryFactory::prepare(geos_build_geoms[i].get());
+        }
+        for (int64_t i = tid; i < n_probe; i += num_threads) {
+          geos_probe_geoms[i] =
+              local_reader.read(probe_wkbs[i].data.as_uint8, probe_wkbs[i].size_bytes);
+          geos_probe_geoms[i]->getEnvelopeInternal();
+        }
+      });
+    }
+    for (auto& w : workers) w.join();
+  }
+  double geos_build_ms =
+      std::chrono::duration<double, std::milli>(Clock::now() - t_geos_build_start)
+          .count();
+
+  // 2. GPU ParallelWkbLoader + RelateEngine & RTSpatialRefiner setup
+  RTSpatialRefinerConfig refiner_config;
+  refiner_config.rt_engine = rt_engine;
+  auto rt_refiner = CreateRTSpatialRefiner(refiner_config);
+
+  auto cuda_stream = rmm::cuda_stream_default;
+  ParallelWkbLoader<Point<double, 2>, uint32_t> build_loader, probe_loader;
+  build_loader.Init();
+  probe_loader.Init();
+
+  auto t_gpu_build_start = Clock::now();
+  build_loader.Parse(cuda_stream, build_view.get(), 0, n_build);
+  auto d_build_geoms = build_loader.Finish(cuda_stream);
+  probe_loader.Parse(cuda_stream, probe_view.get(), 0, n_probe);
+  auto d_probe_geoms = probe_loader.Finish(cuda_stream);
+  cuda_stream.synchronize();
+  double gpu_build_ms =
+      std::chrono::duration<double, std::milli>(Clock::now() - t_gpu_build_start).count();
+
+  rt_refiner->PushBuild(build_view.get());
+  rt_refiner->FinishBuilding();
+
+  RelateEngine<Point<double, 2>, uint32_t> relate_engine(&d_build_geoms, rt_engine.get());
+
+  std::cout << "\n====================================================================\n"
+            << "[" << suite_name << "] Polygon-Polygon Benchmark & Parity (Threads = "
+            << num_threads << ")\n"
+            << "Build polygons: " << n_build << ", Probe polygons: " << n_probe
+            << ", Candidate pairs: " << num_candidates << "\n"
+            << "WKB Parse + Index Prep -> GPU: " << std::fixed << std::setprecision(2)
+            << gpu_build_ms
+            << " ms | GEOS PreparedPolygon (MT): " << geos_build_ms << " ms\n"
+            << "--------------------------------------------------------------------\n";
+
+  const std::vector<Predicate> predicates = {
+      Predicate::kIntersects, Predicate::kContains,  Predicate::kCovers,
+      Predicate::kWithin,     Predicate::kCoveredBy, Predicate::kTouches};
+
+  for (Predicate pred : predicates) {
+    // A. Pure GPU RT RelateEngine::Evaluate (pre-loaded DeviceGeometries, apples-to-apples)
+    rmm::device_uvector<uint32_t> d_b(num_candidates, cuda_stream);
+    rmm::device_uvector<uint32_t> d_p(num_candidates, cuda_stream);
+    CUDA_CHECK(cudaMemcpyAsync(d_b.data(), cand_build_indices.data(),
+                               num_candidates * sizeof(uint32_t), cudaMemcpyHostToDevice,
+                               cuda_stream.value()));
+    CUDA_CHECK(cudaMemcpyAsync(d_p.data(), cand_probe_indices.data(),
+                               num_candidates * sizeof(uint32_t), cudaMemcpyHostToDevice,
+                               cuda_stream.value()));
+    cuda_stream.synchronize();
+
+    auto t_gpu_eval_start = Clock::now();
+    relate_engine.Evaluate(cuda_stream, d_probe_geoms, pred, d_b, d_p);
+    cuda_stream.synchronize();
+    double gpu_eval_ms =
+        std::chrono::duration<double, std::milli>(Clock::now() - t_gpu_eval_start)
+            .count();
+
+    // B. End-to-End RTSpatialRefiner::Refine (includes probe WKB parsing)
+    std::vector<uint32_t> gpu_b = cand_build_indices;
+    std::vector<uint32_t> gpu_p = cand_probe_indices;
+    auto t_gpu_ref_start = Clock::now();
+    size_t gpu_count = rt_refiner->Refine(probe_view.get(), pred, gpu_b.data(),
+                                          gpu_p.data(), gpu_b.size());
+    double gpu_refine_ms =
+        std::chrono::duration<double, std::milli>(Clock::now() - t_gpu_ref_start).count();
+    gpu_b.resize(gpu_count);
+    gpu_p.resize(gpu_count);
+
+    // C. Multi-threaded GEOS PreparedPolygon Refine
+    std::vector<uint8_t> geos_keep(num_candidates, 0);
+    auto t_geos_ref_start = Clock::now();
+    {
+      std::vector<std::thread> workers;
+      for (unsigned int tid = 0; tid < num_threads; ++tid) {
+        workers.emplace_back([&, tid]() {
+          for (size_t k = 0; k < num_candidates; ++k) {
+            uint32_t b_id = cand_build_indices[k];
+            if (b_id % num_threads != tid) continue;
+            uint32_t p_id = cand_probe_indices[k];
+            if (EvaluatePreparedGeosPredicate(pred, geos_prep_build[b_id].get(),
+                                              geos_build_geoms[b_id].get(),
+                                              geos_probe_geoms[p_id].get())) {
+              geos_keep[k] = 1;
+            }
+          }
+        });
+      }
+      for (auto& w : workers) w.join();
+    }
+    double geos_refine_ms =
+        std::chrono::duration<double, std::milli>(Clock::now() - t_geos_ref_start)
+            .count();
+
+    std::vector<std::pair<uint32_t, uint32_t>> gpu_pairs, geos_pairs;
+    for (size_t k = 0; k < gpu_count; ++k) {
+      gpu_pairs.emplace_back(gpu_b[k], gpu_p[k]);
+    }
+    for (size_t k = 0; k < num_candidates; ++k) {
+      if (geos_keep[k])
+        geos_pairs.emplace_back(cand_build_indices[k], cand_probe_indices[k]);
+    }
+
+    std::sort(gpu_pairs.begin(), gpu_pairs.end());
+    std::sort(geos_pairs.begin(), geos_pairs.end());
+
+    std::cout << std::left << std::setw(11) << PredicateToString(pred)
+              << " | Hits: " << std::setw(5) << gpu_pairs.size()
+              << " | GPU Eval: " << std::setw(5) << gpu_eval_ms << " ms"
+              << " (E2E: " << std::setw(5) << gpu_refine_ms << " ms)"
+              << " | GEOS Prep(MT): " << std::setw(6) << geos_refine_ms << " ms ("
+              << (geos_refine_ms / std::max(0.001, gpu_eval_ms)) << "x)\n";
+
+    EXPECT_EQ(gpu_pairs, geos_pairs)
+        << "GPU RT vs GEOS mismatch on " << PredicateToString(pred);
+  }
+  std::cout << "====================================================================\n";
+}
+
+TEST(JoinerTest, PolygonPolygonMultiThreadBenchmarkAndParity) {
+  using namespace TestUtils;
+
+  // Suite 1: Synthetic Polygons (10,000 x 10,000 ~7-vertex polygons)
+  {
+    auto poly1_path = ResolveSyntheticPolyPath("synthetic_poly/polygons1.parquet");
+    auto poly2_path = ResolveSyntheticPolyPath("synthetic_poly/polygons2.parquet");
+
+    auto poly1_arrays = ReadParquet(poly1_path, 10000);
+    auto poly2_arrays = ReadParquet(poly2_path, 10000);
+
+    std::vector<nanoarrow::UniqueArray> build_uniq_arrays, probe_uniq_arrays;
+    std::vector<nanoarrow::UniqueSchema> build_uniq_schema, probe_uniq_schema;
+    for (auto& arr : poly1_arrays) {
+      ARROW_THROW_NOT_OK(arrow::ExportArray(*arr, build_uniq_arrays.emplace_back().get(),
+                                            build_uniq_schema.emplace_back().get()));
+    }
+    for (auto& arr : poly2_arrays) {
+      ARROW_THROW_NOT_OK(arrow::ExportArray(*arr, probe_uniq_arrays.emplace_back().get(),
+                                            probe_uniq_schema.emplace_back().get()));
+    }
+    RunPolygonBenchmarkSuite("Synthetic ~7-Vertex Polygons", build_uniq_schema[0].get(),
+                             build_uniq_arrays[0].get(), probe_uniq_schema[0].get(),
+                             probe_uniq_arrays[0].get());
+  }
+
+  // Suite 2: Complex Polygons (600 x 600 256-vertex polygons with varying radii)
+  {
+    auto make_wavy_poly_wkt = [](double cx, double cy, double base_r, int n_verts,
+                                 double phase) {
+      std::ostringstream oss;
+      oss << std::fixed << std::setprecision(6) << "POLYGON ((";
+      double first_x = 0.0, first_y = 0.0;
+      for (int k = 0; k < n_verts; ++k) {
+        double angle = 2.0 * M_PI * k / n_verts;
+        double r = base_r * (1.0 + 0.15 * std::sin(7.0 * angle + phase));
+        double x = cx + r * std::cos(angle);
+        double y = cy + r * std::sin(angle);
+        if (k == 0) {
+          first_x = x;
+          first_y = y;
+        }
+        oss << x << " " << y << ", ";
+      }
+      oss << first_x << " " << first_y << "))";
+      return oss.str();
+    };
+
+    std::vector<std::string> build_wkts, probe_wkts;
+    const int grid_n = 25;  // 25 x 25 = 625 complex polygons per side
+    const int n_verts = 256;
+    for (int gx = 0; gx < grid_n; ++gx) {
+      for (int gy = 0; gy < grid_n; ++gy) {
+        double cx = gx * 10.0;
+        double cy = gy * 10.0;
+        build_wkts.push_back(make_wavy_poly_wkt(cx, cy, 8.0, n_verts, 0.1 * (gx + gy)));
+        // Half of probes are smaller (some contained/within), half are shifted/overlapping
+        if ((gx + gy) % 4 == 0) {
+          probe_wkts.push_back(
+              make_wavy_poly_wkt(cx, cy, 4.0, n_verts, 0.2 * (gx + gy)));
+        } else {
+          probe_wkts.push_back(make_wavy_poly_wkt(cx + 4.5, cy + 3.5, 7.5, n_verts,
+                                                  0.3 * (gx + gy)));
+        }
+      }
+    }
+
+    nanoarrow::UniqueArrayStream build_stream, probe_stream;
+    ArrayStreamFromWKT({build_wkts}, GEOARROW_TYPE_WKB, build_stream.get());
+    ArrayStreamFromWKT({probe_wkts}, GEOARROW_TYPE_WKB, probe_stream.get());
+
+    nanoarrow::UniqueSchema build_schema, probe_schema;
+    nanoarrow::UniqueArray build_arr, probe_arr;
+    ArrowError error;
+    ASSERT_EQ(ArrowArrayStreamGetSchema(build_stream.get(), build_schema.get(), &error),
+              NANOARROW_OK);
+    ASSERT_EQ(ArrowArrayStreamGetNext(build_stream.get(), build_arr.get(), &error),
+              NANOARROW_OK);
+    ASSERT_EQ(ArrowArrayStreamGetSchema(probe_stream.get(), probe_schema.get(), &error),
+              NANOARROW_OK);
+    ASSERT_EQ(ArrowArrayStreamGetNext(probe_stream.get(), probe_arr.get(), &error),
+              NANOARROW_OK);
+
+    RunPolygonBenchmarkSuite("Complex 256-Vertex Polygons", build_schema.get(),
+                             build_arr.get(), probe_schema.get(), probe_arr.get());
+  }
+}
+
 }  // namespace gpuspatial
