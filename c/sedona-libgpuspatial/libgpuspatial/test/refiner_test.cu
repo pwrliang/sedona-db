@@ -397,6 +397,17 @@ void TestJoinerWKT(const std::vector<std::vector<std::string>>& build_wkt_batche
              predicate, pipelined);
 }
 
+TEST(JoinerTest, GeometryCollectionChildPolygonInPass2) {
+  std::vector<std::vector<std::string>> build_batches = {{
+      "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
+  }};
+  std::vector<std::vector<std::string>> probe_batches = {{
+      "GEOMETRYCOLLECTION (POLYGON ((1 1, 2 1, 2 2, 1 2, 1 1)), POINT (100 100))",
+  }};
+  TestJoinerWKT(build_batches, probe_batches, Predicate::kIntersects);
+  TestJoinerWKT(probe_batches, build_batches, Predicate::kIntersects);
+}
+
 TEST(JoinerTest, MixedGeometryProbeIntersects) {
   // Build side has concave / L-shaped polygons and multipolygons where MBR != geometry
   std::vector<std::vector<std::string>> build_batches = {{
