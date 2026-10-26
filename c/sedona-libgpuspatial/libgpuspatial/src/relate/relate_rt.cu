@@ -468,6 +468,14 @@ void PreFilterByMBR(const rmm::cuda_stream_view& stream, const GEOM1_VIEW_T& geo
   ids2.resize(new_size, stream);
 }
 
+// Partitions candidate pairs for Pass 2 (reverse ray tracing where geom2 is the probe
+// and geom1 is the BVH target). Pairs that still require Pass 2 are moved to the front
+// ([0, mid)).
+//
+// Pass 1 tests rays from geom1 into geom2. For many candidate pairs, Pass 1 is already
+// decisive for the requested predicate, or the remaining criteria are mathematically
+// impossible to satisfy. Pruning those pairs here avoids building BVHs and casting rays
+// in Pass 2 for the vast majority of disjoint or already-resolved pairs.
 template <bool GEOM2_IS_SINGLE_POLY, typename GEOM1_VIEW_T, typename GEOM2_VIEW_T,
           typename INDEX_T>
 size_t PartitionForPass2(const rmm::cuda_stream_view& stream,
@@ -500,27 +508,46 @@ size_t PartitionForPass2(const rmm::cuda_stream_view& stream,
         switch (predicate) {
           case Predicate::kIntersects:
           case Predicate::kDisjoint: {
+            // If Pass 1 already detected any boundary/interior intersection, the pair
+            // is guaranteed to intersect (and not disjoint); no reverse pass is needed.
             if ((im1 & kAnyIntersectMask) != 0) {
               return false;
             }
+            // With zero boundary hits in Pass 1, g1 and g2 can only intersect if g2 is
+            // completely contained in the interior of g1. For a single polygon g2,
+            // containment requires g1's MBR to cover g2's MBR. If it doesn't, they are
+            // provably disjoint and Pass 2 can be skipped.
+            // (If g2 is a MultiPolygon, one part could be inside g1 even if g1 does not
+            // cover g2's overall MBR, so we must run Pass 2).
             if constexpr (GEOM2_IS_SINGLE_POLY) {
               return PaddedCovers(g1.get_mbr(), g2.get_mbr());
             }
             return true;
           }
           case Predicate::kTouches: {
+            // Touches requires boundaries to intersect and interiors to be disjoint.
+            // If Pass 1 found interior-interior overlap, it cannot touch (skip Pass 2).
+            // If Pass 1 found zero boundary-boundary contact, Pass 2 (which only probes
+            // interior containment of g2 into g1) cannot create new boundary contact,
+            // so Touches cannot be true (skip Pass 2).
             return (im1 & IntersectionMatrix::INTER_INTER_2D) == 0 &&
                    (im1 & IntersectionMatrix::BOUND_BOUND_2D) != 0;
           }
           case Predicate::kWithin:
           case Predicate::kCoveredBy:
           case Predicate::kEquals: {
+            // Within / CoveredBy require g1 to be entirely inside g2 (no part of g1 in g2's exterior).
+            // If Pass 1 revealed that g1's interior or boundary touches g2's exterior,
+            // g1 cannot be within g2. Likewise, zero intersections in Pass 1 means disjoint.
             return (im1 & (IntersectionMatrix::INTER_EXTER_2D |
                            IntersectionMatrix::BOUND_EXTER_2D)) == 0 &&
                    (im1 & kAnyIntersectMask) != 0;
           }
           case Predicate::kContains:
           case Predicate::kCovers: {
+            // Contains / Covers require g2 to be entirely inside g1 (no part of g2 in g1's exterior).
+            // If Pass 1 already observed g2's boundary or interior in g1's exterior,
+            // g1 cannot contain g2.
             return (im1 & (IntersectionMatrix::EXTER_INTER_2D |
                            IntersectionMatrix::EXTER_BOUND_2D)) == 0;
           }
