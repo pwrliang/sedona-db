@@ -408,6 +408,102 @@ TEST(JoinerTest, GeometryCollectionChildPolygonInPass2) {
   TestJoinerWKT(probe_batches, build_batches, Predicate::kIntersects);
 }
 
+TEST(JoinerTest, GeosGeometryCollectionTestSuite) {
+  struct TestCase {
+    std::string name;
+    std::string wkt_a;
+    std::string wkt_b;
+  };
+
+  // Test cases adapted from GEOS RelateNGGC test suite and GeometryCollection edge cases
+  std::vector<TestCase> cases = {
+      {"testMP_GLP_GEOS1027",
+       "MULTIPOLYGON (((0 0, 3 0, 3 3, 0 3, 0 0)))",
+       "GEOMETRYCOLLECTION (LINESTRING (1 2, 1 1), POINT (0 0))"},
+      {"testGPL_A",
+       "GEOMETRYCOLLECTION (POINT (7 1), LINESTRING (6 5, 6 4))",
+       "POLYGON ((7 1, 1 3, 3 9, 7 1))"},
+      {"testP_GPL",
+       "POINT (0 0)",
+       "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 0))"},
+      {"testLineInOverlappingPolygonsTouchingInteriorEdge",
+       "LINESTRING (3 7, 7 3)",
+       "GEOMETRYCOLLECTION (POLYGON ((1 9, 7 9, 7 3, 1 3, 1 9)), POLYGON ((9 1, 3 1, 3 7, 9 7, 9 1)))"},
+      {"testLineInOverlappingPolygonsCrossingInteriorEdgeAtVertex",
+       "LINESTRING (2 2, 8 8)",
+       "GEOMETRYCOLLECTION (POLYGON ((1 1, 1 7, 7 7, 7 1, 1 1)), POLYGON ((9 9, 9 3, 3 3, 3 9, 9 9)))"},
+      {"testLineInOverlappingPolygonsCrossingInteriorEdgeProper",
+       "LINESTRING (2 4, 6 8)",
+       "GEOMETRYCOLLECTION (POLYGON ((1 1, 1 7, 7 7, 7 1, 1 1)), POLYGON ((9 9, 9 3, 3 3, 3 9, 9 9)))"},
+      {"testPolygonInOverlappingPolygonsTouchingBoundaries",
+       "GEOMETRYCOLLECTION (POLYGON ((1 9, 6 9, 6 4, 1 4, 1 9)), POLYGON ((9 1, 4 1, 4 6, 9 6, 9 1)))",
+       "POLYGON ((2 6, 6 2, 8 4, 4 8, 2 6))"},
+      {"testLineInOverlappingPolygonsBoundaries",
+       "LINESTRING (1 6, 9 6, 9 1, 1 1, 1 6)",
+       "GEOMETRYCOLLECTION (POLYGON ((1 1, 1 6, 6 6, 6 1, 1 1)), POLYGON ((9 1, 4 1, 4 6, 9 6, 9 1)))"},
+      {"testAdjacentPolygonsContainedInAdjacentPolygons",
+       "GEOMETRYCOLLECTION (POLYGON ((2 2, 2 5, 4 5, 4 2, 2 2)), POLYGON ((8 2, 4 3, 4 4, 8 5, 8 2)))",
+       "GEOMETRYCOLLECTION (POLYGON ((1 1, 1 6, 4 6, 4 1, 1 1)), POLYGON ((9 1, 4 1, 4 6, 9 6, 9 1)))"},
+      {"testGCMultiPolygonIntersectsPolygon",
+       "POLYGON ((2 5, 3 5, 3 3, 2 3, 2 5))",
+       "GEOMETRYCOLLECTION (MULTIPOLYGON (((1 4, 4 4, 4 1, 1 1, 1 4)), ((5 4, 8 4, 8 1, 5 1, 5 4))))"},
+      {"testPolygonContainsGCMultiPolygonElement",
+       "POLYGON ((0 5, 4 5, 4 1, 0 1, 0 5))",
+       "GEOMETRYCOLLECTION (MULTIPOLYGON (((1 4, 3 4, 3 2, 1 2, 1 4)), ((6 4, 8 4, 8 2, 6 2, 6 4))))"},
+      {"testPolygonOverlappingGCPolygon",
+       "GEOMETRYCOLLECTION (POLYGON ((18.6 40.8, 16.8825 39.618567, 16.9319 39.5461, 17.10985 39.485133, 16.6143 38.4302, 16.43145 38.313267, 16.2 37.5, 14.8 37.8, 14.96475 40.474933, 18.6 40.8)))",
+       "POLYGON ((16.3649953125 38.37219358064516, 16.3649953125 39.545924774193544, 17.949465625000002 39.545924774193544, 17.949465625000002 38.37219358064516, 16.3649953125 38.37219358064516))"},
+      {"testAdjPolygonsCoverPolygonWithEndpointInside",
+       "GEOMETRYCOLLECTION (POLYGON ((5 5, 2 9, 9 9, 9 5, 5 5)), POLYGON ((3 1, 5 5, 9 5, 9 1, 3 1)), POLYGON ((1 9, 2 9, 5 5, 3 1, 1 1, 1 9)))",
+       "POLYGON ((3 7, 7 7, 7 3, 3 3, 3 7))"},
+      {"testAdjPolygonsCoverPointAtNode",
+       "GEOMETRYCOLLECTION (POLYGON ((5 5, 2 9, 9 9, 9 5, 5 5)), POLYGON ((3 1, 5 5, 9 5, 9 1, 3 1)), POLYGON ((1 9, 2 9, 5 5, 3 1, 1 1, 1 9)))",
+       "POINT (5 5)"},
+      {"testAdjPolygonsCoverPointOnEdge",
+       "GEOMETRYCOLLECTION (POLYGON ((5 5, 2 9, 9 9, 9 5, 5 5)), POLYGON ((3 1, 5 5, 9 5, 9 1, 3 1)), POLYGON ((1 9, 2 9, 5 5, 3 1, 1 1, 1 9)))",
+       "POINT (7 5)"},
+      {"testAdjPolygonsContainingPolygonTouchingInteriorEndpoint",
+       "GEOMETRYCOLLECTION (POLYGON ((5 5, 2 9, 9 9, 9 5, 5 5)), POLYGON ((3 1, 5 5, 9 5, 9 1, 3 1)), POLYGON ((1 9, 2 9, 5 5, 3 1, 1 1, 1 9)))",
+       "POLYGON ((5 5, 7 5, 7 3, 5 3, 5 5))"},
+      {"testAdjPolygonsOverlappedByPolygonWithHole",
+       "GEOMETRYCOLLECTION (POLYGON ((5 5, 2 9, 9 9, 9 5, 5 5)), POLYGON ((3 1, 5 5, 9 5, 9 1, 3 1)), POLYGON ((1 9, 2 9, 5 5, 3 1, 1 1, 1 9)))",
+       "POLYGON ((0 10, 10 10, 10 0, 0 0, 0 10), (2 8, 8 8, 8 2, 2 2, 2 8))"},
+      {"testAdjPolygonsContainingLine",
+       "GEOMETRYCOLLECTION (POLYGON ((5 5, 2 9, 9 9, 9 5, 5 5)), POLYGON ((3 1, 5 5, 9 5, 9 1, 3 1)), POLYGON ((1 9, 2 9, 5 5, 3 1, 1 1, 1 9)))",
+       "LINESTRING (5 5, 7 7)"},
+      {"testAdjPolygonsContainingLineAndPoint",
+       "GEOMETRYCOLLECTION (POLYGON ((5 5, 2 9, 9 9, 9 5, 5 5)), POLYGON ((3 1, 5 5, 9 5, 9 1, 3 1)), POLYGON ((1 9, 2 9, 5 5, 3 1, 1 1, 1 9)))",
+       "GEOMETRYCOLLECTION (POINT (5 5), LINESTRING (5 7, 7 7))"},
+      {"testPolygonContainingPointsInBoundary",
+       "POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0))",
+       "GEOMETRYCOLLECTION (POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0)), MULTIPOINT ((0 2), (0 5)))"},
+      {"testPolygonContainingLineInBoundary",
+       "POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0))",
+       "GEOMETRYCOLLECTION (POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0)), LINESTRING (0 2, 0 5))"},
+      {"testPolygonContainingBentLineInBoundary",
+       "POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0))",
+       "GEOMETRYCOLLECTION (POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0)), LINESTRING (0 2, 0 5, 5 5))"},
+      {"testGCContainedPolygonWithDistantPoint",
+       "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
+       "GEOMETRYCOLLECTION (POLYGON ((1 1, 2 1, 2 2, 1 2, 1 1)), POINT (100 100))"},
+      {"testGCContainedMultiPolygonWithDistantPoint",
+       "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
+       "GEOMETRYCOLLECTION (MULTIPOLYGON (((1 1, 2 1, 2 2, 1 2, 1 1)), ((3 3, 4 3, 4 4, 3 4, 3 3))), POINT (100 100))"},
+      {"testGCContainedLineWithDistantPoint",
+       "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
+       "GEOMETRYCOLLECTION (LINESTRING (1 1, 2 2), POINT (100 100))"},
+      {"testTwoGCsWithDistantNonIntersectingAndContainedComponents",
+       "GEOMETRYCOLLECTION (POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0)), POINT (-100 -100))",
+       "GEOMETRYCOLLECTION (POLYGON ((1 1, 2 1, 2 2, 1 2, 1 1)), POINT (100 100))"},
+  };
+
+  for (const auto& tc : cases) {
+    SCOPED_TRACE(tc.name);
+    TestJoinerWKT({{tc.wkt_a}}, {{tc.wkt_b}}, Predicate::kIntersects);
+    TestJoinerWKT({{tc.wkt_b}}, {{tc.wkt_a}}, Predicate::kIntersects);
+  }
+}
+
 TEST(JoinerTest, MixedGeometryProbeIntersects) {
   // Build side has concave / L-shaped polygons and multipolygons where MBR != geometry
   std::vector<std::vector<std::string>> build_batches = {{
